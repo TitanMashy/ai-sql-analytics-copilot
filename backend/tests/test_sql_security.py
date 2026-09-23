@@ -1,4 +1,3 @@
-
 import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import StaticPool

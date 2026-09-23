@@ -1,7 +1,14 @@
 from fastapi import APIRouter, Depends, Request
 
 from app.schemas.analytics import ErrorResponse
-from app.schemas.generation import AskResponse, GeneratedQueryResponse, GenerationRequest
+from app.schemas.generation import (
+    AskResponse,
+    GeneratedQueryResponse,
+    GenerationRequest,
+    KPIResponse,
+    VisualizationAxisResponse,
+    VisualizationResponse,
+)
 from app.services.generation import SQLGenerationService
 from app.services.llm_dependencies import get_sql_generation_service
 
@@ -62,10 +69,33 @@ def ask_analytics(
         request_id=request.state.request_id,
         conversation_context=payload.conversation_context,
     )
+    kpi = result.analysis.kpi
+    visualization = result.analysis.visualization
     return AskResponse(
         **result.generated.__dict__,
         columns=result.result.columns,
         rows=result.result.rows,
         row_count=result.result.row_count,
         execution_time_ms=result.result.execution_time_ms,
+        summary=result.summary,
+        kpi=KPIResponse(**kpi.__dict__) if kpi else None,
+        visualization=(
+            VisualizationResponse(
+                type=visualization.type,
+                title=visualization.title,
+                x_axis=(
+                    VisualizationAxisResponse(**visualization.x_axis.__dict__)
+                    if visualization.x_axis
+                    else None
+                ),
+                y_axis=(
+                    VisualizationAxisResponse(**visualization.y_axis.__dict__)
+                    if visualization.y_axis
+                    else None
+                ),
+            )
+            if visualization
+            else None
+        ),
+        warnings=result.analysis.warnings,
     )

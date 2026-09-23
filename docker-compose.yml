@@ -19,7 +19,9 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://app@postgres:5432/app
       ANALYTICS_DATABASE_URL: postgresql+psycopg://analytics_readonly@postgres:5432/app
-      LLM_MODE: mock
+      LLM_MODE: ${LLM_MODE:-mock}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-flash-latest}
       LOG_LEVEL: INFO
       MAX_RESULT_ROWS: 1000
       QUERY_TIMEOUT_SECONDS: 10

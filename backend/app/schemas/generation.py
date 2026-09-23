@@ -1,4 +1,6 @@
-from typing import Any
+from __future__ import annotations
+
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -23,3 +25,25 @@ class AskResponse(GeneratedQueryResponse):
     rows: list[dict[str, Any]]
     row_count: int
     execution_time_ms: float
+    summary: str | None = None
+    kpi: KPIResponse | None = None
+    visualization: VisualizationResponse | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
+class KPIResponse(BaseModel):
+    label: str
+    value: Any
+    format: Literal["currency", "integer", "decimal", "percentage", "text"]
+
+
+class VisualizationAxisResponse(BaseModel):
+    field: str
+    format: Literal["currency", "integer", "decimal", "percentage", "text"] = "text"
+
+
+class VisualizationResponse(BaseModel):
+    type: Literal["table", "kpi", "bar", "line", "area", "pie"]
+    title: str
+    x_axis: VisualizationAxisResponse | None = None
+    y_axis: VisualizationAxisResponse | None = None

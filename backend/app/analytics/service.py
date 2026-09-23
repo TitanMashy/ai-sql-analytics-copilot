@@ -18,6 +18,7 @@ class QueryResult:
     rows: list[dict[str, Any]]
     row_count: int
     execution_time_ms: float
+    column_types: dict[str, str]
 
 
 class AnalyticsServiceError(Exception):
@@ -67,12 +68,8 @@ class AnalyticsQueryService:
         if not validation.valid:
             error_code = validation.error_code
             status_code = 400
-            if (
-                validation.error_code == "QUERY_VALIDATION_ERROR"
-                and any(
-                    error.startswith("Unknown or disallowed table")
-                    for error in validation.errors
-                )
+            if validation.error_code == "QUERY_VALIDATION_ERROR" and any(
+                error.startswith("Unknown or disallowed table") for error in validation.errors
             ):
                 error_code = "TABLE_NOT_FOUND"
                 status_code = 404
@@ -137,6 +134,10 @@ class AnalyticsQueryService:
 
         elapsed_ms = (perf_counter() - started_at) * 1000
         normalized_rows = normalize_rows([row._mapping for row in rows])
+        column_types = {
+            column: self._infer_column_type([row.get(column) for row in normalized_rows])
+            for column in columns
+        }
         logger.info(
             "analytics query executed",
             extra={
@@ -150,4 +151,20 @@ class AnalyticsQueryService:
             rows=normalized_rows,
             row_count=len(normalized_rows),
             execution_time_ms=round(elapsed_ms, 2),
+            column_types=column_types,
         )
+
+    @staticmethod
+    def _infer_column_type(values: list[Any]) -> str:
+        for value in values:
+            if value is None:
+                continue
+            if isinstance(value, bool):
+                return "boolean"
+            if isinstance(value, int):
+                return "integer"
+            if isinstance(value, float):
+                return "numeric"
+            if isinstance(value, str):
+                return "string"
+        return "unknown"

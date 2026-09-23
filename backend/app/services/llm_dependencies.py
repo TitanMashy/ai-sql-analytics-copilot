@@ -7,6 +7,7 @@ from app.llm.mock_provider import MockLLMProvider
 from app.llm.openai_provider import OpenAIProvider
 from app.llm.provider import LLMProvider, LLMProviderError
 from app.services.generation import SQLGenerationService
+from app.services.result_summary import ResultSummaryService
 from app.services.schema_retriever import SchemaRetriever
 
 
@@ -33,4 +34,5 @@ def get_sql_generation_service() -> SQLGenerationService:
         retriever=SchemaRetriever(),
         analytics_service=get_analytics_query_service(),
         max_repair_retries=get_settings().max_repair_retries,
+        summary_service=ResultSummaryService(enabled=get_settings().enable_result_summary),
     )

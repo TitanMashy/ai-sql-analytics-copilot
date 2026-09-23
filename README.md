@@ -81,7 +81,7 @@ curl -X POST http://localhost:8000/api/v1/analytics/generate \
 	-d '{"question":"What were the top 10 customers by revenue?"}'
 ```
 
-The optional combined endpoint generates SQL, sends it through the existing validator, and then executes it through the read-only analytics database:
+The optional combined endpoint generates SQL, sends it through the existing validator, executes it through the read-only analytics database, and adds deterministic KPI, visualization, warning, and summary metadata:
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/analytics/ask \
@@ -90,6 +90,8 @@ curl -X POST http://localhost:8000/api/v1/analytics/ask \
 ```
 
 Set `LLM_MODE=gemini`, `GEMINI_API_KEY`, and `GEMINI_MODEL` to use the official Google Gemini provider. Gemini structured output is parsed through the existing response parser. Provider output is untrusted: `tables_used`, confidence, and generated SQL never bypass validation. The generation prompt contains only relevant schema metadata and business definitions, never credentials or database URLs.
+
+The `/ask` response is frontend-ready: `kpi` is returned for single aggregate values, `visualization` is selected deterministically from result shape, `warnings` covers empty or low-quality data, and `summary` is grounded in the returned rows. Set `ENABLE_RESULT_SUMMARY=false` to disable summaries without affecting SQL execution.
 
 ## Docker
 

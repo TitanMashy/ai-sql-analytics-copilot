@@ -85,8 +85,10 @@ def test_gemini_provider_handles_empty_response() -> None:
 
 def test_gemini_generated_sql_uses_existing_validation_before_execution() -> None:
     client = FakeClient(
-        ['{"sql":"SELECT COUNT(*) AS active_count FROM vehicles WHERE status = \'active\'",'
-         '"explanation":"Counts active vehicles.","tables_used":["vehicles"]}']
+        [
+            '{"sql":"SELECT COUNT(*) AS active_count FROM vehicles WHERE status = \'active\'",'
+            '"explanation":"Counts active vehicles.","tables_used":["vehicles"]}'
+        ]
     )
     engine = create_engine("sqlite://", poolclass=StaticPool)
     with engine.begin() as connection:
