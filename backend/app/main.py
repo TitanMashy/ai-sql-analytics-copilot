@@ -8,10 +8,12 @@ from fastapi.responses import JSONResponse
 
 from app.analytics.service import AnalyticsServiceError
 from app.api.analytics import router as analytics_router
+from app.api.generation import router as generation_router
 from app.api.health import router as health_router
 from app.api.schema import router as schema_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
+from app.llm.provider import LLMProviderError
 
 settings = get_settings()
 configure_logging(settings.log_level)
@@ -19,6 +21,7 @@ configure_logging(settings.log_level)
 app = FastAPI(title="AI SQL Analytics Copilot API", version="0.1.0")
 app.include_router(health_router, prefix="/api/v1")
 app.include_router(analytics_router, prefix="/api/v1")
+app.include_router(generation_router, prefix="/api/v1")
 app.include_router(schema_router, prefix="/api/v1")
 
 logger = logging.getLogger(__name__)
@@ -48,6 +51,15 @@ async def request_context_middleware(request: Request, call_next):
 async def analytics_service_error_handler(
     request: Request, error: AnalyticsServiceError
 ) -> JSONResponse:
+    del request
+    return JSONResponse(
+        status_code=error.status_code,
+        content={"error": {"code": error.code, "message": error.message}},
+    )
+
+
+@app.exception_handler(LLMProviderError)
+async def llm_provider_error_handler(request: Request, error: LLMProviderError) -> JSONResponse:
     del request
     return JSONResponse(
         status_code=error.status_code,

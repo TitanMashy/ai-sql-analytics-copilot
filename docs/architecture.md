@@ -3,11 +3,14 @@
 ```mermaid
 flowchart TD
     Client[API Client] --> API[FastAPI]
-    API --> Validation[SQLValidator placeholder]
+    API --> Retrieval[SchemaRetriever]
+    Retrieval --> Provider[LLMProvider]
+    Provider --> Generation[Structured SQL]
+    Generation --> Validation[SQLValidator placeholder]
     Validation --> Service[AnalyticsQueryService]
     Service --> Analytics[(PostgreSQL analytics_readonly)]
     Service --> Serialization[Result serialization]
     Serialization --> API
 ```
 
-The backend remains a modular monolith. The analytics service uses the separate read-only database URL, validates direct SQL input, executes with configurable limits, and normalizes results before returning JSON. The LLM and SQL generation pipeline will be added in later sprints.
+The backend remains a modular monolith. `/generate` retrieves relevant schema and business definitions before calling either the deterministic mock provider or the optional OpenAI provider. `/ask` passes generated SQL into the existing validator and analytics service; generation never executes SQL directly.

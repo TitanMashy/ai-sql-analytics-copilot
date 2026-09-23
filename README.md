@@ -1,16 +1,17 @@
 # AI SQL Analytics Copilot
 
-The AI SQL Analytics Copilot is a modular monolith for turning natural-language analytics questions into safe, explainable SQL workflows. Sprint 3 adds the FastAPI analytics execution foundation over the migration-owned SaaS fleet-management dataset.
+The AI SQL Analytics Copilot is a modular monolith for turning natural-language analytics questions into safe, explainable SQL workflows. Sprint 4 adds schema-aware natural-language SQL generation with deterministic mock and optional OpenAI providers.
 
 ## Architecture
 
-See [docs/architecture.md](docs/architecture.md) for the preliminary architecture diagram and [docs/database-schema.md](docs/database-schema.md) for the database design. LLM, SQL generation, analytics logic, and the frontend are intentionally deferred to later sprints.
+See [docs/architecture.md](docs/architecture.md) for the architecture diagram, [docs/database-schema.md](docs/database-schema.md) for the database design, and [docs/business-definitions.md](docs/business-definitions.md) for metric definitions. The frontend and AST security layer remain deferred.
 
 ## Technology Stack
 
 - Python 3.12+
 - FastAPI and Pydantic
 - SQLAlchemy and psycopg
+- OpenAI SDK with a provider abstraction
 - PostgreSQL
 - Alembic migrations
 - pytest and Ruff
@@ -69,6 +70,26 @@ The response contains `columns`, JSON-safe `rows`, `row_count`, and `execution_t
 Example analytics SQL is defined in [backend/app/sql/examples.py](backend/app/sql/examples.py), including revenue, utilization, idle time, fuel, and maintenance queries.
 
 The current validator intentionally uses conservative placeholder checks. It is not a complete SQL security boundary; parser-backed validation, query policy enforcement, and stronger tenant isolation are Sprint 5 work.
+
+## Natural-Language API
+
+Mock mode works without an API key and is the default. It supports representative fleet questions and returns SQL without executing it:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/analytics/generate \
+	-H 'Content-Type: application/json' \
+	-d '{"question":"What were the top 10 customers by revenue?"}'
+```
+
+The optional combined endpoint generates SQL, sends it through the existing validator, and then executes it through the read-only analytics database:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/analytics/ask \
+	-H 'Content-Type: application/json' \
+	-d '{"question":"What is the total number of active vehicles?"}'
+```
+
+Set `LLM_MODE=openai`, `OPENAI_API_KEY`, and `OPENAI_MODEL` to use the OpenAI provider. Provider output is untrusted: `tables_used`, confidence, and generated SQL never bypass validation. The generation prompt contains only relevant schema metadata and business definitions, never credentials or database URLs.
 
 ## Docker
 
