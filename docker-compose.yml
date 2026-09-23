@@ -21,6 +21,8 @@ services:
       ANALYTICS_DATABASE_URL: postgresql+psycopg://analytics_readonly@postgres:5432/app
       LLM_MODE: mock
       LOG_LEVEL: INFO
+      MAX_RESULT_ROWS: 1000
+      QUERY_TIMEOUT_SECONDS: 10
     ports:
       - "8000:8000"
     depends_on:

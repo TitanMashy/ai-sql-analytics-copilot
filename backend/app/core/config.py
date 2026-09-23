@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     openai_model: str = Field(default="gpt-4o-mini", validation_alias="OPENAI_MODEL")
     llm_mode: str = Field(default="mock", validation_alias="LLM_MODE")
     log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
+    max_result_rows: int = Field(default=1000, validation_alias="MAX_RESULT_ROWS")
+    query_timeout_seconds: float = Field(default=10.0, validation_alias="QUERY_TIMEOUT_SECONDS")
 
     model_config = SettingsConfigDict(
         env_file=".env",
