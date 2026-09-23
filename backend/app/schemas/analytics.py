@@ -9,8 +9,11 @@ class AnalyticsQueryRequest(BaseModel):
 
 class AnalyticsValidationResponse(BaseModel):
     valid: bool
+    normalized_sql: str | None
     errors: list[str]
     warnings: list[str]
+    tables: list[str]
+    complexity: dict[str, Any]
 
 
 class AnalyticsQueryResponse(BaseModel):

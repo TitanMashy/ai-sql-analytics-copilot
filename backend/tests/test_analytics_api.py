@@ -72,7 +72,10 @@ def test_invalid_sql_returns_structured_error(client: TestClient, sql: str, mess
     response = client.post("/api/v1/analytics/query", json={"sql": sql})
 
     assert response.status_code == 400
-    assert response.json()["error"]["code"] == "QUERY_VALIDATION_ERROR"
+    if sql.startswith("UPDATE") or ";" in sql:
+        assert response.json()["error"]["code"] == "QUERY_SECURITY_ERROR"
+    else:
+        assert response.json()["error"]["code"] == "QUERY_VALIDATION_ERROR"
     assert message in response.json()["error"]["message"]
 
 
@@ -88,11 +91,21 @@ def test_nonexistent_table_returns_table_error(client: TestClient) -> None:
     }
 
 
+def test_system_table_returns_security_error(client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/analytics/query",
+        json={"sql": "SELECT * FROM pg_catalog.pg_tables"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "QUERY_SECURITY_ERROR"
+
+
 def test_database_error_is_structured(client: TestClient) -> None:
     response = client.post("/api/v1/analytics/query", json={"sql": "SELECT * FROM"})
 
     assert response.status_code == 400
-    assert response.json()["error"]["code"] == "QUERY_EXECUTION_ERROR"
+    assert response.json()["error"]["code"] == "QUERY_PARSE_ERROR"
 
 
 def test_row_limit_is_enforced(client: TestClient) -> None:

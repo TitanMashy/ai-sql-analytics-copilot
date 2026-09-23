@@ -23,6 +23,9 @@ services:
       LOG_LEVEL: INFO
       MAX_RESULT_ROWS: 1000
       QUERY_TIMEOUT_SECONDS: 10
+      MAX_QUERY_JOINS: 5
+      MAX_QUERY_NESTING: 3
+      MAX_REPAIR_RETRIES: 3
     ports:
       - "8000:8000"
     depends_on:

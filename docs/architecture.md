@@ -6,7 +6,7 @@ flowchart TD
     API --> Retrieval[SchemaRetriever]
     Retrieval --> Provider[LLMProvider]
     Provider --> Generation[Structured SQL]
-    Generation --> Validation[SQLValidator placeholder]
+    Generation --> Validation[SQLGlot ASTValidator]
     Validation --> Service[AnalyticsQueryService]
     Service --> Analytics[(PostgreSQL analytics_readonly)]
     Service --> Serialization[Result serialization]

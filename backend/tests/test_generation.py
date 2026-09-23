@@ -165,4 +165,4 @@ def test_generated_write_sql_is_rejected_before_execution() -> None:
     with pytest.raises(AnalyticsServiceError) as error:
         service.ask("delete vehicles")
 
-    assert error.value.code == "QUERY_VALIDATION_ERROR"
+    assert error.value.code == "QUERY_SECURITY_ERROR"

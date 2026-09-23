@@ -55,6 +55,9 @@ def validate_analytics_query(
     result = service.validate(payload.sql)
     return AnalyticsValidationResponse(
         valid=result.valid,
+        normalized_sql=result.normalized_sql,
         errors=result.errors,
         warnings=result.warnings,
+        tables=result.tables,
+        complexity=result.complexity.as_dict(),
     )

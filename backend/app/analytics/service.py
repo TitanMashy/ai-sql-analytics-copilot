@@ -21,11 +21,18 @@ class QueryResult:
 
 
 class AnalyticsServiceError(Exception):
-    def __init__(self, code: str, message: str, status_code: int) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        status_code: int,
+        repairable: bool = False,
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.status_code = status_code
+        self.repairable = repairable
 
 
 class AnalyticsQueryService:
@@ -35,9 +42,15 @@ class AnalyticsQueryService:
         validator: SQLValidator | None = None,
         max_result_rows: int = 1000,
         query_timeout_seconds: float = 10.0,
+        max_query_joins: int = 5,
+        max_query_nesting: int = 3,
     ) -> None:
         self.engine = engine
-        self.validator = validator or SQLValidator()
+        self.validator = validator or SQLValidator(
+            max_result_rows=max_result_rows,
+            max_query_joins=max_query_joins,
+            max_query_nesting=max_query_nesting,
+        )
         self.max_result_rows = max_result_rows
         self.query_timeout_seconds = query_timeout_seconds
 
@@ -52,10 +65,25 @@ class AnalyticsQueryService:
     def execute(self, sql: str, request_id: str | None = None) -> QueryResult:
         validation = self.validate(sql)
         if not validation.valid:
+            error_code = validation.error_code
+            status_code = 400
+            if (
+                validation.error_code == "QUERY_VALIDATION_ERROR"
+                and any(
+                    error.startswith("Unknown or disallowed table")
+                    for error in validation.errors
+                )
+            ):
+                error_code = "TABLE_NOT_FOUND"
+                status_code = 404
+                error_message = "The requested table does not exist."
+            else:
+                error_message = "; ".join(validation.errors)
             raise AnalyticsServiceError(
-                "QUERY_VALIDATION_ERROR",
-                "; ".join(validation.errors),
-                400,
+                error_code,
+                error_message,
+                status_code,
+                repairable=validation.repairable,
             )
 
         started_at = perf_counter()
@@ -64,7 +92,7 @@ class AnalyticsQueryService:
                 if connection.dialect.name == "postgresql":
                     timeout_ms = max(1, int(self.query_timeout_seconds * 1000))
                     connection.execute(text(f"SET statement_timeout = {timeout_ms}"))
-                result = connection.execute(text(sql))
+                result = connection.execute(text(validation.normalized_sql or sql))
                 rows = result.fetchmany(self.max_result_rows + 1)
                 columns = list(result.keys())
         except SQLAlchemyError as error:
@@ -80,16 +108,24 @@ class AnalyticsQueryService:
                     "The analytics query exceeded the configured timeout.",
                     408,
                 ) from error
+            if "permission denied" in message or "must be owner" in message:
+                raise AnalyticsServiceError(
+                    "QUERY_PERMISSION_ERROR",
+                    "The analytics database denied permission for this query.",
+                    403,
+                ) from error
             if "does not exist" in message or "no such table" in message:
                 raise AnalyticsServiceError(
                     "TABLE_NOT_FOUND",
                     "The requested table does not exist.",
                     404,
+                    repairable=True,
                 ) from error
             raise AnalyticsServiceError(
                 "QUERY_EXECUTION_ERROR",
                 "The analytics query could not be executed.",
                 400,
+                repairable=True,
             ) from error
 
         if len(rows) > self.max_result_rows:

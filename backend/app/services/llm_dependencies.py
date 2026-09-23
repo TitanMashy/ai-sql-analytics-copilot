@@ -29,4 +29,5 @@ def get_sql_generation_service() -> SQLGenerationService:
         provider=get_llm_provider(),
         retriever=SchemaRetriever(),
         analytics_service=get_analytics_query_service(),
+        max_repair_retries=get_settings().max_repair_retries,
     )

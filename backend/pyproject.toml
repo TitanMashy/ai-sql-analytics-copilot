@@ -11,6 +11,7 @@ dependencies = [
     "fastapi>=0.115,<1.0",
     "alembic>=1.14,<2.0",
     "openai>=1.60,<2.0",
+    "sqlglot>=27.0,<28.0",
     "pydantic>=2.9,<3.0",
     "pydantic-settings>=2.6,<3.0",
     "psycopg[binary]>=3.2,<4.0",
@@ -31,6 +32,7 @@ include = ["app*"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+markers = ["integration: requires a live PostgreSQL analytics database"]
 
 [tool.ruff]
 line-length = 100

@@ -47,7 +47,7 @@ Running `make seed` again is idempotent and reports `already seeded`.
 
 ## Analytics API
 
-The direct SQL API is an internal foundation for Sprint 4 and does not call OpenAI. It validates a single `SELECT`, executes through `ANALYTICS_DATABASE_URL` as `analytics_readonly`, normalizes database values to JSON, and enforces `MAX_RESULT_ROWS` and `QUERY_TIMEOUT_SECONDS`.
+The direct SQL API is an internal execution surface and does not call OpenAI. It parses SQL with SQLGlot, enforces the application-table allowlist and read-only rules, executes through `ANALYTICS_DATABASE_URL` as `analytics_readonly`, normalizes database values to JSON, and enforces result, timeout, and complexity limits.
 
 Validate a query:
 
@@ -69,7 +69,7 @@ The response contains `columns`, JSON-safe `rows`, `row_count`, and `execution_t
 
 Example analytics SQL is defined in [backend/app/sql/examples.py](backend/app/sql/examples.py), including revenue, utilization, idle time, fuel, and maintenance queries.
 
-The current validator intentionally uses conservative placeholder checks. It is not a complete SQL security boundary; parser-backed validation, query policy enforcement, and stronger tenant isolation are Sprint 5 work.
+See [docs/security.md](docs/security.md) for the threat model and validation rules. AST validation is defense in depth, not a guarantee; database privileges and future tenant isolation remain essential.
 
 ## Natural-Language API
 

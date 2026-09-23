@@ -34,6 +34,24 @@ class OpenAIProvider:
         conversation_context: str | None = None,
     ) -> LLMGeneration:
         prompt = self.prompt_builder.build(question, schema_context, conversation_context)
+        return self._complete(prompt)
+
+    def repair_sql(
+        self,
+        question: str,
+        original_sql: str,
+        error_message: str,
+        schema_context: SchemaContext,
+    ) -> LLMGeneration:
+        prompt = self.prompt_builder.build(question, schema_context)
+        repair_prompt = (
+            f"{prompt}\nRepair the SQL below using the database error. "
+            "Return the same JSON structure and only a read-only SELECT.\n"
+            f"Original SQL:\n{original_sql}\nDatabase error:\n{error_message}"
+        )
+        return self._complete(repair_prompt)
+
+    def _complete(self, prompt: str) -> LLMGeneration:
         try:
             response = self.client.chat.completions.create(
                 model=self.model,

@@ -78,3 +78,13 @@ class MockLLMProvider:
             "Mock mode does not have a deterministic response for this question.",
             422,
         )
+
+    def repair_sql(
+        self,
+        question: str,
+        original_sql: str,
+        error_message: str,
+        schema_context: SchemaContext,
+    ) -> LLMGeneration:
+        del original_sql, error_message
+        return self.generate_sql(question, schema_context)
