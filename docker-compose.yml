@@ -5,6 +5,8 @@ services:
       POSTGRES_DB: app
       POSTGRES_USER: app
       POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - ./database/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U app -d app"]
       interval: 5s
@@ -16,7 +18,7 @@ services:
       context: ./backend
     environment:
       DATABASE_URL: postgresql+psycopg://app@postgres:5432/app
-      ANALYTICS_DATABASE_URL: postgresql+psycopg://app@postgres:5432/app
+      ANALYTICS_DATABASE_URL: postgresql+psycopg://analytics_readonly@postgres:5432/app
       LLM_MODE: mock
       LOG_LEVEL: INFO
     ports:
