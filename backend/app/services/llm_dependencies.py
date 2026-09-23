@@ -2,6 +2,7 @@ from functools import lru_cache
 
 from app.analytics.dependencies import get_analytics_query_service
 from app.core.config import get_settings
+from app.llm.gemini_provider import GeminiProvider
 from app.llm.mock_provider import MockLLMProvider
 from app.llm.openai_provider import OpenAIProvider
 from app.llm.provider import LLMProvider, LLMProviderError
@@ -16,9 +17,11 @@ def get_llm_provider() -> LLMProvider:
         return MockLLMProvider()
     if settings.llm_mode.casefold() == "openai":
         return OpenAIProvider(settings)
+    if settings.llm_mode.casefold() == "gemini":
+        return GeminiProvider(settings)
     raise LLMProviderError(
         "LLM_CONFIGURATION_ERROR",
-        "LLM_MODE must be either 'mock' or 'openai'.",
+        "LLM_MODE must be 'mock' or 'gemini'.",
         503,
     )
 

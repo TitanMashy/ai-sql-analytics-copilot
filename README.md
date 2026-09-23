@@ -1,6 +1,6 @@
 # AI SQL Analytics Copilot
 
-The AI SQL Analytics Copilot is a modular monolith for turning natural-language analytics questions into safe, explainable SQL workflows. Sprint 4 adds schema-aware natural-language SQL generation with deterministic mock and optional OpenAI providers.
+The AI SQL Analytics Copilot is a modular monolith for turning natural-language analytics questions into safe, explainable SQL workflows. Sprint 4 adds schema-aware natural-language SQL generation with deterministic mock and optional Gemini providers.
 
 ## Architecture
 
@@ -11,7 +11,7 @@ See [docs/architecture.md](docs/architecture.md) for the architecture diagram, [
 - Python 3.12+
 - FastAPI and Pydantic
 - SQLAlchemy and psycopg
-- OpenAI SDK with a provider abstraction
+- Google Gemini SDK with a provider abstraction
 - PostgreSQL
 - Alembic migrations
 - pytest and Ruff
@@ -47,7 +47,7 @@ Running `make seed` again is idempotent and reports `already seeded`.
 
 ## Analytics API
 
-The direct SQL API is an internal execution surface and does not call OpenAI. It parses SQL with SQLGlot, enforces the application-table allowlist and read-only rules, executes through `ANALYTICS_DATABASE_URL` as `analytics_readonly`, normalizes database values to JSON, and enforces result, timeout, and complexity limits.
+The direct SQL API is an internal execution surface and does not call Gemini. It parses SQL with SQLGlot, enforces the application-table allowlist and read-only rules, executes through `ANALYTICS_DATABASE_URL` as `analytics_readonly`, normalizes database values to JSON, and enforces result, timeout, and complexity limits.
 
 Validate a query:
 
@@ -89,7 +89,7 @@ curl -X POST http://localhost:8000/api/v1/analytics/ask \
 	-d '{"question":"What is the total number of active vehicles?"}'
 ```
 
-Set `LLM_MODE=openai`, `OPENAI_API_KEY`, and `OPENAI_MODEL` to use the OpenAI provider. Provider output is untrusted: `tables_used`, confidence, and generated SQL never bypass validation. The generation prompt contains only relevant schema metadata and business definitions, never credentials or database URLs.
+Set `LLM_MODE=gemini`, `GEMINI_API_KEY`, and `GEMINI_MODEL` to use the official Google Gemini provider. Gemini structured output is parsed through the existing response parser. Provider output is untrusted: `tables_used`, confidence, and generated SQL never bypass validation. The generation prompt contains only relevant schema metadata and business definitions, never credentials or database URLs.
 
 ## Docker
 

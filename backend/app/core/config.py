@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     )
     openai_api_key: str | None = Field(default=None, validation_alias="OPENAI_API_KEY")
     openai_model: str = Field(default="gpt-4o-mini", validation_alias="OPENAI_MODEL")
+    gemini_api_key: str | None = Field(default=None, validation_alias="GEMINI_API_KEY")
+    gemini_model: str = Field(default="gemini-2.5-flash", validation_alias="GEMINI_MODEL")
     llm_mode: str = Field(default="mock", validation_alias="LLM_MODE")
     log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
     max_result_rows: int = Field(default=1000, validation_alias="MAX_RESULT_ROWS")
