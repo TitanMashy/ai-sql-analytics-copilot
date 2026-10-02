@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 
 from app.analytics.service import AnalyticsServiceError
 from app.api.analytics import router as analytics_router
+from app.api.conversations import router as conversations_router
 from app.api.generation import router as generation_router
 from app.api.health import router as health_router
 from app.api.schema import router as schema_router
@@ -22,6 +23,7 @@ app = FastAPI(title="AI SQL Analytics Copilot API", version="0.1.0")
 app.include_router(health_router, prefix="/api/v1")
 app.include_router(analytics_router, prefix="/api/v1")
 app.include_router(generation_router, prefix="/api/v1")
+app.include_router(conversations_router, prefix="/api/v1")
 app.include_router(schema_router, prefix="/api/v1")
 
 logger = logging.getLogger(__name__)

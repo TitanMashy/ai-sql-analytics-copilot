@@ -2,6 +2,7 @@ import logging
 from dataclasses import dataclass, replace
 
 from app.analytics.service import AnalyticsQueryService, AnalyticsServiceError, QueryResult
+from app.conversation.service import ConversationMemory, get_conversation_memory
 from app.llm.prompt import SQLPromptBuilder
 from app.llm.provider import LLMGeneration, LLMProvider, LLMProviderError
 from app.services.result_analyzer import AnalyticsResultAnalyzer
@@ -43,6 +44,7 @@ class SQLGenerationService:
         result_analyzer: AnalyticsResultAnalyzer | None = None,
         visualization_selector: VisualizationSelector | None = None,
         summary_service: ResultSummaryService | None = None,
+        conversation_memory: ConversationMemory | None = None,
     ) -> None:
         self.provider = provider
         self.retriever = retriever or SchemaRetriever()
@@ -52,16 +54,19 @@ class SQLGenerationService:
         self.result_analyzer = result_analyzer or AnalyticsResultAnalyzer()
         self.visualization_selector = visualization_selector or VisualizationSelector()
         self.summary_service = summary_service or ResultSummaryService()
+        self.conversation_memory = conversation_memory or get_conversation_memory()
 
     def generate(
         self,
         question: str,
         conversation_context: str | None = None,
+        conversation_id: str | None = None,
     ) -> GeneratedQuery:
         if not question.strip():
             raise LLMProviderError("INVALID_REQUEST", "Question cannot be empty.", 422)
         context = self.retriever.retrieve(question)
-        generation = self.provider.generate_sql(question, context, conversation_context)
+        resolved_context = self._resolve_context(conversation_id, conversation_context)
+        generation = self.provider.generate_sql(question, context, resolved_context)
         return self._to_generated_query(question, context, generation)
 
     def ask(
@@ -69,11 +74,15 @@ class SQLGenerationService:
         question: str,
         request_id: str | None = None,
         conversation_context: str | None = None,
+        conversation_id: str | None = None,
     ) -> AskedQuery:
         if self.analytics_service is None:
             raise RuntimeError("AnalyticsQueryService is required for ask")
         context = self.retriever.retrieve(question)
-        generated = self.generate(question, conversation_context)
+        resolved_context = self._resolve_context(conversation_id, conversation_context)
+        if conversation_id:
+            self.conversation_memory.add_turn(conversation_id, "user", question)
+        generated = self.generate(question, resolved_context, conversation_id=conversation_id)
         repair_attempts = 0
         while True:
             try:
@@ -94,6 +103,12 @@ class SQLGenerationService:
                 summary = self.summary_service.summarize(
                     question, generated.sql, result.columns, result.rows, analysis
                 )
+                if conversation_id:
+                    self.conversation_memory.add_turn(
+                        conversation_id,
+                        "assistant",
+                        summary or generated.explanation or "The SQL executed successfully.",
+                    )
                 return AskedQuery(
                     generated=generated,
                     result=result,
@@ -115,6 +130,17 @@ class SQLGenerationService:
                     context,
                 )
                 generated = self._to_generated_query(question, context, repaired)
+
+    def _resolve_context(
+        self,
+        conversation_id: str | None,
+        conversation_context: str | None,
+    ) -> str | None:
+        if conversation_context:
+            return conversation_context
+        if conversation_id is None:
+            return None
+        return self.conversation_memory.build_context(conversation_id)
 
     def _to_generated_query(
         self,

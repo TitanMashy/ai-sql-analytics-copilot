@@ -13,8 +13,8 @@ The technically interesting parts are the modular LLM provider boundary, determi
 ## 2. Current Status
 
 ```text
-Current status: Sprints 1–6 COMPLETE
-Next sprint: Sprint 7
+Current status: Sprints 1–6 COMPLETE; Sprint 7 BASICS IMPLEMENTED
+Next sprint: Sprint 8
 Project is NOT finished.
 Frontend work has NOT been completed; frontend/ contains only a placeholder.
 ```
@@ -27,7 +27,7 @@ Frontend work has NOT been completed; frontend/ contains only a placeholder.
 | Sprint 4 | COMPLETE | Natural-language SQL generation, schema retrieval, business definitions, provider abstraction, mock provider, Gemini provider, `/generate`, `/ask`, response parsing, and bounded repair. |
 | Sprint 5 | COMPLETE | SQLGlot AST validation, table/column allowlists, dangerous-function/system-table protection, complexity rules, normalized SQL, repair security, and security tests/docs. |
 | Sprint 6 | COMPLETE | Result analyzer, KPI detection, deterministic visualization selection/validation, summaries, data-quality warnings, frontend-ready `/ask` responses, and visualization documentation. |
-| Sprint 7 | NOT STARTED | Conversational analytics and context management. |
+| Sprint 7 | PARTIALLY IMPLEMENTED | Bounded conversation memory, follow-up context handling, and session endpoints are in place. |
 | Sprint 8 | NOT STARTED | Next.js analytics dashboard/frontend. |
 | Sprint 9 | NOT STARTED | Production hardening, observability, performance, and deployment improvements. |
 | Sprint 10 | NOT STARTED | Final polish, documentation, demo preparation, and recruiter-facing presentation. |

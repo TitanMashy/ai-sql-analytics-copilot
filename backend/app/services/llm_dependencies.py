@@ -1,6 +1,7 @@
 from functools import lru_cache
 
 from app.analytics.dependencies import get_analytics_query_service
+from app.conversation.service import get_conversation_memory
 from app.core.config import get_settings
 from app.llm.gemini_provider import GeminiProvider
 from app.llm.mock_provider import MockLLMProvider
@@ -35,4 +36,5 @@ def get_sql_generation_service() -> SQLGenerationService:
         analytics_service=get_analytics_query_service(),
         max_repair_retries=get_settings().max_repair_retries,
         summary_service=ResultSummaryService(enabled=get_settings().enable_result_summary),
+        conversation_memory=get_conversation_memory(),
     )

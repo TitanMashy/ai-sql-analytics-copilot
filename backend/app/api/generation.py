@@ -36,7 +36,11 @@ def generate_sql(
     payload: GenerationRequest,
     service: SQLGenerationService = Depends(get_sql_generation_service),  # noqa: B008
 ) -> GeneratedQueryResponse:
-    result = service.generate(payload.question, payload.conversation_context)
+    result = service.generate(
+        payload.question,
+        payload.conversation_context,
+        conversation_id=payload.conversation_id,
+    )
     return GeneratedQueryResponse(**result.__dict__)
 
 
@@ -68,6 +72,7 @@ def ask_analytics(
         payload.question,
         request_id=request.state.request_id,
         conversation_context=payload.conversation_context,
+        conversation_id=payload.conversation_id,
     )
     kpi = result.analysis.kpi
     visualization = result.analysis.visualization

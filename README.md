@@ -89,7 +89,15 @@ curl -X POST http://localhost:8000/api/v1/analytics/ask \
 	-d '{"question":"What is the total number of active vehicles?"}'
 ```
 
-Set `LLM_MODE=gemini`, `GEMINI_API_KEY`, and `GEMINI_MODEL` to use the official Google Gemini provider. Gemini structured output is parsed through the existing response parser. Provider output is untrusted: `tables_used`, confidence, and generated SQL never bypass validation. The generation prompt contains only relevant schema metadata and business definitions, never credentials or database URLs.
+For follow-up questions, pass a `conversation_id` to continue the same analytic thread with bounded context retention. The system keeps only the recent turns and trims the history to a safe prompt budget rather than forwarding the entire transcript:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/analytics/ask \
+	-H 'Content-Type: application/json' \
+	-d '{"question":"Now compare that to the prior month.","conversation_id":"fleet-ops-1"}'
+```
+
+Set `LLM_MODE=gemini`, `GEMINI_API_KEY`, and `GEMINI_MODEL` to use the official Google Gemini provider. Gemini structured output is parsed through the existing response parser. Provider output is untrusted: `tables_used`, confidence, and generated SQL never bypass validation. The generation prompt contains only relevant schema metadata and business definitions, never credentials or database URLs. See [docs/conversation-context.md](docs/conversation-context.md) for the bounded memory design.
 
 The `/ask` response is frontend-ready: `kpi` is returned for single aggregate values, `visualization` is selected deterministically from result shape, `warnings` covers empty or low-quality data, and `summary` is grounded in the returned rows. Set `ENABLE_RESULT_SUMMARY=false` to disable summaries without affecting SQL execution.
 

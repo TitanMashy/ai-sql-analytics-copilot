@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 class GenerationRequest(BaseModel):
     question: str = Field(description="A natural-language analytics question.")
+    conversation_id: str | None = Field(default=None, description="Optional conversation thread.")
     conversation_context: str | None = Field(default=None, description="Optional prior context.")
 
 
