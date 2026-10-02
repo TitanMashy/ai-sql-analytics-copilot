@@ -4,19 +4,19 @@ This document is the persistent context for future coding agents. Read it before
 
 ## 1. Project Overview
 
-**AI SQL Analytics Copilot** is a backend-first analytics product for fleet-management SaaS data. A user asks a natural-language business question, such as "What were the top customers by revenue?", and the system retrieves relevant schema context, generates read-only PostgreSQL SQL, validates it independently of the LLM, executes it against a restricted analytics database, and returns rows plus result intelligence suitable for a future dashboard.
+**AI SQL Analytics Copilot** is a backend-first analytics product for fleet-management SaaS data. A user asks a natural-language business question, such as "What were the top customers by revenue?", and the system retrieves relevant schema context, generates read-only PostgreSQL SQL, validates it independently of the LLM, executes it against a restricted analytics database, and presents result intelligence in a conversational dashboard.
 
 The target users are fleet operators, business analysts, and product/revenue teams who need answers from operational, utilization, maintenance, fuel, and billing data without hand-writing SQL. The project exists to make that workflow explainable and safer than allowing an LLM to execute arbitrary database output.
 
-The technically interesting parts are the modular LLM provider boundary, deterministic schema/business-context retrieval, AST-backed SQL security, a separate PostgreSQL read-only role, bounded SQL repair, and post-query KPI/visualization analysis. The frontend is intentionally not built yet.
+The technically interesting parts are the modular LLM provider boundary, deterministic schema/business-context retrieval, AST-backed SQL security, a separate PostgreSQL read-only role, bounded SQL repair, bounded conversation context, and post-query KPI/visualization analysis.
 
 ## 2. Current Status
 
 ```text
-Current status: Sprints 1–6 COMPLETE; Sprint 7 BASICS IMPLEMENTED
-Next sprint: Sprint 8
+Current status: Sprints 1–8 COMPLETE
+Next sprint: Sprint 9
 Project is NOT finished.
-Frontend work has NOT been completed; frontend/ contains only a placeholder.
+Production hardening and final demo preparation remain.
 ```
 
 | Sprint | Status | Description |
@@ -27,8 +27,8 @@ Frontend work has NOT been completed; frontend/ contains only a placeholder.
 | Sprint 4 | COMPLETE | Natural-language SQL generation, schema retrieval, business definitions, provider abstraction, mock provider, Gemini provider, `/generate`, `/ask`, response parsing, and bounded repair. |
 | Sprint 5 | COMPLETE | SQLGlot AST validation, table/column allowlists, dangerous-function/system-table protection, complexity rules, normalized SQL, repair security, and security tests/docs. |
 | Sprint 6 | COMPLETE | Result analyzer, KPI detection, deterministic visualization selection/validation, summaries, data-quality warnings, frontend-ready `/ask` responses, and visualization documentation. |
-| Sprint 7 | PARTIALLY IMPLEMENTED | Bounded conversation memory, follow-up context handling, and session endpoints are in place. |
-| Sprint 8 | NOT STARTED | Next.js analytics dashboard/frontend. |
+| Sprint 7 | COMPLETE | Bounded in-memory conversation context, follow-up-aware SQL generation, and conversation endpoints. |
+| Sprint 8 | COMPLETE | Responsive Next.js dashboard, typed API integration, charts/results, Docker service, and frontend validation. |
 | Sprint 9 | NOT STARTED | Production hardening, observability, performance, and deployment improvements. |
 | Sprint 10 | NOT STARTED | Final polish, documentation, demo preparation, and recruiter-facing presentation. |
 
@@ -56,7 +56,7 @@ Implemented capabilities:
 - Deterministic grounded summaries, empty-result handling, NULL warnings, and configurable summary enablement.
 - Structured JSON logs with request ID, endpoint, validation status, execution time, row count, and status code.
 
-Not implemented: frontend, conversational memory, authentication/authorization, vector schema retrieval, tenant-level policy enforcement, and a cost-based query planner.
+Not implemented: authentication/authorization, vector schema retrieval, tenant-level policy enforcement, and a cost-based query planner.
 
 ## 4. Architecture
 
@@ -93,6 +93,9 @@ Result Normalization + Column Profiling
         |
         v
 Frontend-ready Analytics Response
+        |
+        v
+Next.js dashboard (conversation, KPI, chart, table, SQL)
 ```
 
 Responsibilities:
@@ -104,6 +107,7 @@ Responsibilities:
 - **SQLValidator:** parses and validates PostgreSQL SQL before execution.
 - **AnalyticsQueryService:** uses `ANALYTICS_DATABASE_URL`, applies PostgreSQL statement timeout, executes normalized SQL, enforces result limits, classifies database errors, and normalizes rows.
 - **Result intelligence services:** run only after successful execution and cannot influence SQL generation or execution.
+- **Next.js frontend:** sends typed requests through a same-origin rewrite to FastAPI and renders returned data. It does not generate SQL or make validation, allowlist, metric, or visualization decisions.
 - **PostgreSQL:** the application/migration owner uses `DATABASE_URL`; generated analytics queries use the separate `analytics_readonly` role through `ANALYTICS_DATABASE_URL`.
 
 ## 5. Technology Stack
@@ -136,11 +140,17 @@ Responsibilities:
 
 ### Frontend
 
-No frontend application has been implemented. `frontend/` currently contains only `.gitkeep`. Sprint 8 is the planned frontend sprint.
+- Next.js 16, React 19, TypeScript, Tailwind CSS, Recharts, Lucide React, Vitest, Testing Library, and jsdom.
+- `frontend/components/layout/app-sidebar.tsx`: workspace shell and switchable conversation list.
+- `frontend/components/analytics/question-composer.tsx`: accessible question input and starter prompts.
+- `frontend/components/analytics/analytics-results.tsx`: summary, KPIs, charts, data table, warnings, and collapsible/copyable SQL.
+- `frontend/components/charts/chart-renderer.tsx`: backend-selected bar, line, area, and pie rendering.
+- `frontend/lib/api.ts`: typed API client; backend failures remain visible and are never replaced with fake results.
+- Next.js rewrites proxy `/api/*` to `INTERNAL_API_URL` (default `http://localhost:8000`) to keep browser requests same-origin without changing backend CORS policy.
 
 ### Infrastructure
 
-- Docker Compose services: `postgres` and `backend`
+- Docker Compose services: `postgres`, `backend`, and `frontend`
 - Backend Dockerfile installs the editable project with development dependencies and copies application/Alembic files.
 - `.env.example` documents configuration; `.env` is ignored and must never be committed.
 - Make targets include `dev`, `test`, `lint`, `format`, `migrate`, `seed`, `verify-permissions`, `docker-up`, and `docker-down`.
@@ -313,7 +323,7 @@ ai-sql-analytics-copilot/
 │   ├── database-schema.md
 │   ├── security.md
 │   └── visualization.md
-├── frontend/                # placeholder only; no UI yet
+├── frontend/                # Next.js dashboard and tests
 ├── .env.example
 ├── docker-compose.yml
 ├── Makefile
@@ -353,6 +363,8 @@ Tests live in `backend/tests` and use pytest. They cover:
 - AST security: allowed queries, CTEs, joins, aggregates, DML/DDL rejection, system tables, dangerous functions, unknown identifiers, complexity, limits, prompt injection, and repair security.
 - Result intelligence: KPI formats, line/bar/pie/table selection, visualization validation, formatting, empty results, warnings, grounded summaries, and summary failure fallback.
 - PostgreSQL read-only permissions via a marked integration test when a PostgreSQL analytics URL is configured.
+
+Frontend tests live in `frontend/components/analytics/analytics-dashboard.test.tsx` and cover successful analytics rendering and visible backend failures. Frontend checks are `npm test`, `npm run lint`, and `npm run build` from `frontend/`.
 
 Run the standard checks from the repository root:
 
@@ -401,10 +413,23 @@ The last verified local run reported `70 passed, 1 skipped`; the skip was the Po
 - **Implementation:** result analyzer, typed KPI/visualization contracts, deterministic selector, table fallback, formatting, warnings, grounded summaries, `/ask` response extension, docs, and tests.
 - **Significance:** kept visualization and summary decisions backend-owned and independent of a future frontend.
 
+### Sprint 7 — Conversational Analytics and Context Management
+
+- **Objective:** support multi-turn questions without unbounded prompt history.
+- **Implementation:** bounded in-memory conversation turns, context injection into generation, and conversation session endpoints.
+- **Significance:** lets follow-up questions reuse context while keeping the SQL security pipeline unchanged.
+
+### Sprint 8 — Analytics Dashboard / Frontend
+
+- **Objective:** provide a usable conversational interface for backend analytics responses.
+- **Implementation:** modular Next.js dashboard, typed API client, same-origin API proxy, KPI/chart/table/SQL result views, local conversation switching, responsive layout, frontend tests, standalone Docker image, and Compose integration.
+- **Verification:** frontend tests and lint pass; Next.js production build and frontend Docker image build pass; full Compose stack started and `/api/v1/analytics/ask` smoke-tested through the frontend proxy. The current local demo uses a transient `LLM_MODE=mock` override; `.env` was not changed.
+- **Significance:** completes the user-facing analytics workflow without moving business or SQL security rules into the browser.
+
 ## 16. Known Limitations
 
-- **No frontend:** intentionally deferred to Sprint 8; frontend currently has no implementation.
-- **No conversation memory:** Sprint 7 work; current `conversation_context` is only an optional request field passed into generation.
+- **Conversation persistence is in-memory:** sessions are not durable across backend restarts and are not backed by user identity.
+- **Frontend conversation history is client state:** no account-level saved history or reload persistence is implemented.
 - **No authentication or tenant authorization:** required before production multi-tenant use; database row ownership is modeled but API authorization is not implemented.
 - **No cost-based query planner:** query controls use AST heuristics, join/nesting limits, result limits, and timeouts; they do not estimate database cost.
 - **AST validator is defense in depth:** SQLGlot validation is stronger than regex but cannot be the sole security mechanism.
@@ -416,15 +441,15 @@ The last verified local run reported `70 passed, 1 skipped`; the skip was the Po
 
 ## 17. Remaining Roadmap
 
-These sprints are planned and **NOT IMPLEMENTED**.
+Sprints 1–8 are complete. Sprints 9–10 remain planned and **NOT IMPLEMENTED**.
 
 ### Sprint 7 — Conversational Analytics and Context Management
 
-Add conversation/session state, follow-up questions, prior-result context, clarification handling, and safe context windows. Preserve the existing SQL validation and read-only execution boundaries.
+Complete. Bounded conversation/session state and follow-up-aware context were implemented while preserving SQL validation and read-only execution boundaries.
 
 ### Sprint 8 — Next.js Analytics Dashboard / Frontend
 
-Build the frontend that consumes `/ask`, schema, and generation APIs. Render backend-owned KPI, table, bar, line, area, and pie metadata without moving SQL/security decisions into the browser.
+Complete. The Next.js dashboard consumes `/ask` through a same-origin proxy and renders backend-provided analytics, including KPIs, charts, result tables, warnings, and SQL.
 
 ### Sprint 9 — Production Hardening, Observability, Performance, and Deployment
 
@@ -438,25 +463,25 @@ Complete end-to-end polish, user-facing documentation, sample/demo flows, screen
 
 ```text
 Current stopping point:
-Sprint 6 is complete.
+Sprints 1–8 are complete.
 
 Next task:
-Implement Sprint 7: conversational analytics and context management.
+Implement Sprint 9: production hardening, observability, performance, and deployment.
 
-Do not redo Sprints 1–6.
+Do not redo Sprints 1–8.
 
 First:
 1. Read progress.md.
 2. Inspect the current repository and Git state.
-3. Verify the Sprint 6 tests and Docker/health status.
-4. Understand the existing provider, retrieval, validation, execution, and result-intelligence boundaries.
-5. Implement only Sprint 7.
-6. Preserve existing APIs and SQL security boundaries unless Sprint 7 explicitly requires a change.
+3. Verify the current backend/frontend tests and Docker health status.
+4. Understand the existing UI, provider, retrieval, validation, execution, and result-intelligence boundaries.
+5. Implement only Sprint 9 unless the user changes scope.
+6. Preserve existing APIs and SQL security boundaries unless Sprint 9 explicitly requires a change.
 7. Run relevant tests and the complete suite where practical.
 8. Update progress.md after completing the sprint.
 ```
 
-The next agent should begin by examining `backend/app/services/generation.py`, the request schemas, and the existing tests for the smallest context-management seam. Do not begin frontend work or rewrite the SQL/security layer.
+The next agent should begin by reading the Sprint 9 scope and checking production-readiness risks against the existing backend and frontend boundaries. Do not redo the completed frontend or weaken the SQL/security layer.
 
 ## 19. Instructions for Future AI Agents
 

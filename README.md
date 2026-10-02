@@ -1,10 +1,10 @@
 # AI SQL Analytics Copilot
 
-The AI SQL Analytics Copilot is a modular monolith for turning natural-language analytics questions into safe, explainable SQL workflows. Sprint 4 adds schema-aware natural-language SQL generation with deterministic mock and optional Gemini providers.
+The AI SQL Analytics Copilot is a modular monolith for turning natural-language analytics questions into safe, explainable SQL workflows. Its Next.js dashboard consumes the backend's validated analytics responses and presents conversational results, KPIs, charts, tables, and generated SQL.
 
 ## Architecture
 
-See [docs/architecture.md](docs/architecture.md) for the architecture diagram, [docs/database-schema.md](docs/database-schema.md) for the database design, and [docs/business-definitions.md](docs/business-definitions.md) for metric definitions. The frontend and AST security layer remain deferred.
+See [docs/architecture.md](docs/architecture.md) for the architecture diagram, [docs/database-schema.md](docs/database-schema.md) for the database design, and [docs/business-definitions.md](docs/business-definitions.md) for metric definitions. SQL validation and all business decisions remain backend-owned.
 
 ## Technology Stack
 
@@ -16,6 +16,7 @@ See [docs/architecture.md](docs/architecture.md) for the architecture diagram, [
 - Alembic migrations
 - pytest and Ruff
 - Docker Compose
+- Next.js 16, React 19, TypeScript, Tailwind CSS, Recharts, and Vitest
 
 ## Local Setup
 
@@ -101,12 +102,24 @@ Set `LLM_MODE=gemini`, `GEMINI_API_KEY`, and `GEMINI_MODEL` to use the official 
 
 The `/ask` response is frontend-ready: `kpi` is returned for single aggregate values, `visualization` is selected deterministically from result shape, `warnings` covers empty or low-quality data, and `summary` is grounded in the returned rows. Set `ENABLE_RESULT_SUMMARY=false` to disable summaries without affecting SQL execution.
 
-## Docker
+## Frontend
 
-Start PostgreSQL and the backend with:
+Run the dashboard locally in a separate terminal:
 
 ```bash
-docker compose up --build
+cd frontend
+npm ci
+npm run dev
+```
+
+Open http://localhost:3000. The Next.js server proxies `/api/*` to `http://localhost:8000` by default, so browser requests remain same-origin. Set `INTERNAL_API_URL` to change the proxy destination. The frontend only renders backend-provided results; it does not generate or validate SQL.
+
+## Docker
+
+Start PostgreSQL, the backend, and the frontend with:
+
+```bash
+LLM_MODE=mock docker compose up --build
 ```
 
 Stop the services with:
@@ -116,6 +129,8 @@ docker compose down
 ```
 
 The Compose setup waits for PostgreSQL to become healthy before starting the backend.
+The frontend is available at http://localhost:3000 and waits for the backend health check before starting.
+The mock provider makes the demo deterministic and does not require a Gemini key. To use Gemini, configure `LLM_MODE=gemini` and `GEMINI_API_KEY` in `.env`, then run `docker compose up --build`.
 The PostgreSQL initialization script creates `analytics_readonly`; it receives `SELECT` on application tables through default privileges and is not granted write or DDL permissions.
 
 ## Testing and Linting
@@ -123,4 +138,13 @@ The PostgreSQL initialization script creates `analytics_readonly`; it receives `
 ```bash
 make test
 make lint
+```
+
+Frontend checks:
+
+```bash
+cd frontend
+npm test
+npm run lint
+npm run build
 ```
