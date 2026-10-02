@@ -1,6 +1,6 @@
 # Conversation Context and Bounded Memory
 
-Sprint 7 adds lightweight conversational analytics support without allowing unlimited prompt history to reach Gemini or the rest of the SQL generation layer.
+The implemented conversational analytics layer preserves bounded follow-up context without allowing unlimited prompt history to reach the selected provider or SQL generation layer.
 
 ## Goals
 
@@ -15,7 +15,7 @@ The conversation layer sits between the API layer and the provider call:
 
 1. A `conversation_id` is supplied on a request or created through the conversation endpoints.
 2. A shared in-memory `ConversationMemory` stores the recent ordered user/assistant turns.
-3. A bounded context builder trims the history to the last `N` turns and a byte cap.
+3. A bounded context builder retains at most the latest 8 turns and 2,000 characters by default; both caller context and turn content are independently request-limited.
 4. The generated prompt receives this distilled context, not the raw full transcript.
 5. Each successful question/answer can then become the next follow-up anchor for the same conversation.
 
@@ -46,6 +46,8 @@ The generation and ask endpoints accept:
 - `conversation_id` for continuing the same thread
 - `conversation_context` for explicit context overrides when an application already has a compact summary
 
+Conversation-aware SQL execution uses `POST /api/v1/analytics/ask` with the same `conversation_id`. The UI thread list is client-side for the current page session; backend memory is lost on process restart.
+
 The conversation routes expose simple lifecycle support:
 
 - `POST /api/v1/analytics/conversations` to create a thread
@@ -54,4 +56,4 @@ The conversation routes expose simple lifecycle support:
 
 ## Security Notes
 
-Conversation memory is intentionally not a SQL generation or validation control. It is only a bounded prompt context aid. The actual trust boundary remains the AST validator, table allowlist, read-only PostgreSQL role, and the execution guardrails already in place for Sprints 3–6.
+Conversation memory is intentionally not a SQL generation or validation control. User questions and supplied context remain untrusted prompt data. The actual trust boundary remains SQLGlot validation, the table allowlist, the read-only PostgreSQL role, request limits, and the execution guardrails. Memory is in-process, unauthenticated, and not associated with a user or tenant identity.

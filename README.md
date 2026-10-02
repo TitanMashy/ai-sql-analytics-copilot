@@ -6,6 +6,8 @@ The AI SQL Analytics Copilot turns natural-language fleet questions into safe, e
 
 The system is a modular monolith: Next.js presentation layer -> FastAPI -> schema/business context -> Gemini or mock provider -> SQLGlot validation -> PostgreSQL read-only execution -> result intelligence. SQL generation, validation, metric definitions, summaries, and visualization selection remain backend-owned.
 
+End-to-end, a question is length-validated and assigned a request ID; schema and business definitions are retrieved; the selected provider returns structured SQL; `/generate` returns that SQL without execution, while `/ask` sends it through AST validation, bounded repair when a classified error is repairable, and the read-only query service. Successful rows then receive KPI, visualization, warning, and grounded summary metadata for the frontend. No provider-generated SQL bypasses validation.
+
 See [docs/architecture.md](docs/architecture.md), [docs/database-schema.md](docs/database-schema.md), [docs/business-definitions.md](docs/business-definitions.md), [docs/deployment.md](docs/deployment.md), and [docs/production-security-review.md](docs/production-security-review.md).
 
 ## Stack
@@ -47,11 +49,40 @@ Open http://localhost:3000. Next.js proxies `/api/*` to `http://localhost:8000` 
 - `POST /api/v1/analytics/query` and `/validate` expose the internal direct-SQL surface.
 - `GET /api/v1/metrics` returns process-local counters and latency averages.
 
+| Method | Endpoint | Purpose |
+|---|---|---|
+| GET | `/health` | Liveness probe. |
+| GET | `/health/ready` | Readiness check for application DB, analytics DB, and provider configuration. |
+| GET | `/api/v1/health` | Compatibility application-database health check. |
+| GET | `/api/v1/health/ready` | Versioned readiness alias. |
+| GET | `/api/v1/metrics` | Process-local counters and average latencies. Restrict access at the network boundary. |
+| POST | `/api/v1/analytics/generate` | Generate structured SQL without execution. |
+| POST | `/api/v1/analytics/ask` | Generate, validate, execute, and analyze results. Accepts optional `conversation_id` and bounded `conversation_context`. |
+| POST | `/api/v1/analytics/query` | Validate and execute one direct read-only SQL statement. |
+| POST | `/api/v1/analytics/validate` | Validate SQL without executing it. |
+| POST | `/api/v1/analytics/conversations` | Create an in-memory conversation. |
+| GET | `/api/v1/analytics/conversations/{conversation_id}` | Inspect an in-memory conversation. |
+| POST | `/api/v1/analytics/conversations/{conversation_id}/turns` | Append a bounded conversation turn. |
+| GET | `/api/v1/schema`, `/api/v1/schema/tables`, `/api/v1/schema/tables/{table_name}` | Read schema metadata. |
+| GET | `/docs` | Interactive API documentation outside production mode. |
+
 Errors use `{ "error": { "code": "...", "message": "...", "request_id": "..." } }`. Requests are size- and length-limited; generate/ask/conversation writes have configurable process-local rate limits. PostgreSQL statement timeout, row limits, table/column allowlists, dangerous-function restrictions, and AST validation remain enforced for generated and repaired SQL. Generated SQL is always untrusted.
 
 The analytics DB uses a separate `analytics_readonly` role with a distinct password. Do not grant it writes or use application-owner credentials for analytics execution. See [docs/security.md](docs/security.md) for SQL controls and [docs/production-security-review.md](docs/production-security-review.md) for implemented controls versus recommended future controls. AST validation is defense in depth, not a complete security guarantee.
 
 Set `LLM_MODE=gemini`, `GEMINI_API_KEY`, and `GEMINI_MODEL` for Gemini. Mock mode requires no key and is disabled in production. Provider failures are bounded and classified; generated SQL is never executed after provider failure.
+
+Representative supported questions in deterministic mock mode include:
+
+- How many active vehicles do we have?
+- What were the top 10 customers by revenue?
+- Show monthly revenue for the last 12 months.
+- Which vehicles had the highest idle time?
+- Show fuel consumption by vehicle.
+
+For follow-ups, send `conversation_id` on subsequent `/ask` calls. The backend retains at most eight recent turns and 2,000 context characters by default. Conversation state is process-local and is not durable or user-authenticated; caller context is untrusted prompt data, not an authorization input.
+
+The repair loop is deliberately narrow: only classified repairable parse/schema/execution errors are sent back to the provider, with a configurable maximum of three attempts. Every repaired query returns through the same SQLGlot validator and read-only executor. Security, permission, timeout, complexity, and result-limit failures are not automatically repaired.
 
 ## Docker Compose
 
@@ -71,6 +102,8 @@ The PostgreSQL init script sets the `analytics_readonly` password only for new c
 ## Configuration and Operations
 
 `APP_ENV=production` disables debug/docs and rejects SQLite URLs and mock LLM mode. Configure exact `CORS_ALLOWED_ORIGINS` only when direct cross-origin browser access is required; the Next proxy is same-origin by default. Pool sizes, connection/query/provider timeouts, request limits, rate limits, repair attempts, and result caps are environment-configurable. Do not put real secrets in image build args, source control, or logs.
+
+Configuration lives in `.env.example` and the full setting-by-setting reference is in [docs/deployment.md](docs/deployment.md). Important values include `DATABASE_URL`, `ANALYTICS_DATABASE_URL`, distinct `POSTGRES_PASSWORD` and `ANALYTICS_DATABASE_PASSWORD`, `APP_ENV`, `LLM_MODE`, `GEMINI_API_KEY`, `CORS_ALLOWED_ORIGINS`, `MAX_REQUEST_BODY_BYTES`, `MAX_QUESTION_LENGTH`, `MAX_CONVERSATION_CONTEXT_CHARS`, `RATE_LIMIT_REQUESTS`, `RATE_LIMIT_WINDOW_SECONDS`, pool settings, `QUERY_TIMEOUT_SECONDS`, `MAX_RESULT_ROWS`, and `MAX_REPAIR_RETRIES`.
 
 `GET /health` is liveness; `GET /health/ready` checks application and analytics DBs plus provider configuration. JSON logs carry request/conversation IDs and LLM, validation, SQL, repair, row-count, total-duration, and response-status metadata without logging questions, SQL, API keys, or full URLs. Restrict `/api/v1/metrics` to a trusted network.
 
@@ -95,6 +128,17 @@ npm run build
 
 The backend smoke test exercises active vehicles, total revenue, top customers, monthly revenue, idle time, and fuel queries; it records SQL and total API latency. GitHub Actions runs backend install/lint/tests, frontend install/lint/tests/build, and Compose configuration validation using mock mode without a Gemini key.
 
+## Portfolio Notes
+
+- **What I built:** an end-to-end conversational analytics MVP for fleet operations, from natural-language questions through validated SQL to a responsive results dashboard.
+- **Why:** make operational and revenue questions accessible while keeping generated SQL explainable and constrained by an independent security boundary.
+- **Engineering challenges:** maintaining a strict SQL trust boundary across generation, repair, and execution; bounding conversation and request size; and making provider/database failures observable without leaking sensitive input.
+- **Technical decisions:** modular monolith rather than extra services; provider abstraction with deterministic mock mode; SQLGlot AST validation plus a separate PostgreSQL read-only role; backend-selected visualization metadata; and process-local metrics/rate limiting sized to the current Compose deployment.
+- **Security considerations:** model output is untrusted; all generated and repaired SQL is revalidated; database URLs/keys are runtime secrets; request bodies and expensive endpoints are bounded; and errors/logging use request IDs without returning stack traces or recording questions/SQL.
+- **Production-oriented work:** environment-specific settings, pooled connections and timeouts, health/readiness, structured telemetry, bounded Gemini retries, non-root containers, distinct DB credentials, and automated CI checks. These controls do not replace authentication, tenant isolation, shared multi-instance services, or a managed production ingress.
+
 ## Limitations
 
 There is no authentication, tenant authorization, durable conversation storage, shared multi-instance rate limiter, or external metrics aggregation. Rate limits and metrics are process-local; the metrics endpoint is unauthenticated. Do not expose customer data as a public multi-tenant service without adding those controls. This is a production-oriented MVP, not an enterprise security certification. See [docs/deployment.md](docs/deployment.md) for deployment steps and operational caveats.
+
+Future improvements include user/tenant authorization, durable conversation history, shared rate limiting and metrics, query-cost controls, and deployment-specific TLS/ingress policy. These are not implemented.

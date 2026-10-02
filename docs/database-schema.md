@@ -62,10 +62,10 @@ Dates span 2024 and 2025. Vehicle, driver, trip, invoice, and payment ownership 
 
 ## Database Users
 
-The `app` role owns the schema and is used by migrations and the backend. PostgreSQL initialization creates `analytics_readonly`, grants it database connection and schema usage, and applies `SELECT` to tables created by the `app` role through default privileges. It receives no `INSERT`, `UPDATE`, `DELETE`, `CREATE`, `ALTER`, or `DROP` grants. The separate `ANALYTICS_DATABASE_URL` is reserved for future read-only generated-query execution.
+The `app` role owns the schema and is used by migrations and application database access. PostgreSQL initialization creates `analytics_readonly`, grants it database connection and schema usage, and applies `SELECT` to tables created by the `app` role through default privileges. It receives no `INSERT`, `UPDATE`, `DELETE`, `CREATE`, `ALTER`, or `DROP` grants. `AnalyticsQueryService` uses the separate `ANALYTICS_DATABASE_URL` for direct and generated read-only SQL execution. Fresh Compose clusters use distinct owner and analytics passwords; existing clusters need explicit role password rotation.
 
 After starting PostgreSQL and applying the migration, run `make verify-permissions` to execute the permission assertions in `database/verify-readonly.sql`.
 
 ## Schema Metadata
 
-`app.db.schema_metadata` exposes table names, descriptions, columns, types, and foreign-key relationships for future schema retrieval. Semantic and vector retrieval are intentionally deferred.
+`app.db.schema_metadata` exposes table names, descriptions, columns, types, and foreign-key relationships used by the schema retriever and SQL validator. Retrieval is deterministic and keyword-based; semantic embeddings and vector retrieval are future improvements.

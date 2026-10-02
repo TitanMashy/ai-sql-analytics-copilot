@@ -13,10 +13,8 @@ The technically interesting parts are the modular LLM provider boundary, determi
 ## 2. Current Status
 
 ```text
-Current status: Sprints 1–9 COMPLETE
-Next sprint: Sprint 10
-Project is NOT finished.
-Final demo preparation and acceptance polish remain.
+Current status: Sprints 1–10 COMPLETE
+All planned sprint work is complete. Optional future improvements are listed below; no new sprint is currently in scope.
 ```
 
 | Sprint | Status | Description |
@@ -30,9 +28,9 @@ Final demo preparation and acceptance polish remain.
 | Sprint 7 | COMPLETE | Bounded in-memory conversation context, follow-up-aware SQL generation, and conversation endpoints. |
 | Sprint 8 | COMPLETE | Responsive Next.js dashboard, typed API integration, charts/results, Docker service, and frontend validation. |
 | Sprint 9 | COMPLETE | Production configuration, API limits/rate controls, metrics, health/readiness, provider reliability, frontend failure handling, deployment docs, and CI. |
-| Sprint 10 | NOT STARTED | Final polish, documentation, demo preparation, and recruiter-facing presentation. |
+| Sprint 10 | COMPLETE | Final project documentation, portfolio narrative, verified handoff, and repository readiness. |
 
-The Git history contains one feature commit per completed sprint: `3588083`, `71b655a`, `5c6de51`, `270e7dd`, `3d288f6`, `06169fa`, and `d685fef`.
+Recent implementation commits include Sprint 7 `9554013`, Sprint 8 `5639dd7`, and Sprint 9 `e1291e4`. The Sprint 10 documentation updates are intentionally uncommitted.
 
 ## 3. Product Capabilities
 
@@ -65,7 +63,7 @@ Implemented capabilities:
 - Next.js timeout/network error codes, runtime result validation, retry and duplicate-submit handling, and chart/application error boundaries.
 - Non-root production Docker images, distinct PostgreSQL owner/read-only credentials for fresh clusters, Compose health checks, deployment/security docs, and GitHub Actions CI.
 
-Not implemented: authentication/authorization, vector schema retrieval, tenant-level policy enforcement, and a cost-based query planner.
+Known limitations and optional improvements are listed in Section 16. These are not implemented and are not part of the completed sprint scope.
 
 ## 4. Architecture
 
@@ -145,7 +143,7 @@ Responsibilities:
 - `GeminiProvider` in `backend/app/llm/gemini_provider.py`
 - `MockLLMProvider` in `backend/app/llm/mock_provider.py`
 - Structured prompt and parser modules
-- Real provider selection is controlled by `LLM_MODE`; the default/example mode is `mock`, while the current local `.env` has been configured for Gemini. Never copy the local key into documentation or commits.
+- Real provider selection is controlled by `LLM_MODE`; the example mode is `mock`. Production mode rejects mock mode and requires a configured real provider. Never copy secrets from local environment files into documentation or commits.
 
 ### Frontend
 
@@ -472,6 +470,13 @@ Latest rerun, superseding the earlier 98-pass run below: backend `99 passed, 1 s
 - **Validation:** 99 backend tests passed with one PostgreSQL-only permission test skipped; 11 frontend tests passed; Ruff, ESLint, Next production build, Compose config, both container builds, container health checks, and full-stack health/API/metrics smoke tests passed. Production frontend audit reported zero vulnerabilities. A fresh PostgreSQL 16 init verified distinct owner/read-only password authentication.
 - **Significance:** improves reliability and operational clarity while preserving the existing SQL security boundary; multi-instance and tenant controls remain explicit future work.
 
+### Sprint 10 — Final Documentation and Portfolio Polish
+
+- **Objective:** make the completed project understandable, verifiable, and ready for repository/portfolio review without adding functionality.
+- **Implementation:** refreshed the README overview, end-to-end architecture, API inventory, representative questions, conversation behavior, SQL validation/repair model, configuration, test/Docker instructions, limitations, and portfolio narrative; reconciled architecture, security, conversation, database, and handoff docs; removed stale sprint/Git references.
+- **Validation:** verified documentation claims against the implemented routes/configuration, reviewed recent Git history and the clean starting worktree, checked stale sprint references, and ran `git diff --check`. No application code, tests, CI, Docker, schema, or infrastructure files were changed in Sprint 10.
+- **Significance:** provides a technically credible account of both the production-oriented controls and the remaining non-enterprise limitations.
+
 ## 16. Known Limitations
 
 - **Conversation persistence is in-memory:** sessions are not durable across backend restarts and are not backed by user identity.
@@ -486,52 +491,43 @@ Latest rerun, superseding the earlier 98-pass run below: backend `99 passed, 1 s
 - **Deterministic summaries are the default:** Gemini summary generation is an extension point, not active default behavior, to avoid an unnecessary extra provider call.
 - **Gemini availability is external:** a valid key/model can still receive provider-side capacity errors such as 503; API errors are handled without executing SQL.
 - **Schema retrieval is keyword-based:** no embeddings or vector store exist.
-- **No production deployment/Kubernetes/observability platform:** Docker Compose is the current infrastructure.
+- **No cloud deployment or external observability platform:** deployment is documented for Docker Compose; logs/metrics are local to the application process.
 - **Legacy OpenAI compatibility remains in code:** Gemini is the current configured path; do not remove or rewire providers without an explicit requirement.
 
-## 17. Remaining Roadmap
+## 17. Future Improvements
 
-Sprints 1–9 are complete. Sprint 10 remains planned and **NOT IMPLEMENTED**.
+Sprints 1–10 are complete. These are optional future product/security improvements, not unfinished sprint deliverables:
 
-### Sprint 7 — Conversational Analytics and Context Management
-
-Complete. Bounded conversation/session state and follow-up-aware context were implemented while preserving SQL validation and read-only execution boundaries.
-
-### Sprint 8 — Next.js Analytics Dashboard / Frontend
-
-Complete. The Next.js dashboard consumes `/ask` through a same-origin proxy and renders backend-provided analytics, including KPIs, charts, result tables, warnings, and SQL.
-
-### Sprint 9 — Production Hardening, Observability, Performance, and Deployment
-
-Complete. Production configuration, API abuse/request limits, pooling, metrics, request-correlated logging/errors, readiness/liveness, Gemini retry/error classification, safe bounded repair, frontend failure handling, Docker hardening, CI, deployment/security docs, and SQL/API smoke timing are implemented. Authentication/tenant isolation, shared multi-instance operations, and deployment gateway controls remain limitations, not Sprint 9 work claims.
-
-### Sprint 10 — Final Polish and Demo Preparation
-
-Complete end-to-end polish, user-facing documentation, sample/demo flows, screenshots or presentation materials, recruiter-facing README/project narrative, and final acceptance verification.
+- Add authentication, authorization, tenant isolation, and database row policies before serving multiple customers.
+- Persist conversation history with per-user ownership, retention, and deletion controls.
+- Use a shared rate limiter and metrics aggregation if deploying multiple backend instances.
+- Add external log/metric collection and deployment-specific alerting.
+- Evaluate query-cost controls, stricter schema/views, or embeddings only when supported by measured needs.
+- Deploy behind a trusted TLS gateway with private database and metrics access.
 
 ## 18. How to Resume Development
 
 ```text
 Current stopping point:
-Sprints 1–9 are complete.
+Sprints 1–10 are complete.
 
 Next task:
-Implement Sprint 10: final polish and demo preparation.
+No sprint is currently in progress. Only start new work when explicitly requested.
 
-Do not redo Sprints 1–9.
+Do not redo Sprints 1–10.
 
 First:
 1. Read progress.md.
 2. Inspect the current repository and Git state.
 3. Verify the current backend/frontend tests and Docker health status.
 4. Understand the existing UI, provider, retrieval, validation, execution, and result-intelligence boundaries.
-5. Implement only Sprint 10 unless the user changes scope.
-6. Preserve existing APIs and SQL security boundaries unless Sprint 10 explicitly requires a change.
+5. Confirm the requested scope before making future improvements.
+6. Preserve existing APIs and SQL security boundaries unless explicitly required.
 7. Run relevant tests and the complete suite where practical.
 8. Update progress.md after completing the sprint.
 ```
 
-The next agent should begin by reading the Sprint 10 scope and checking remaining demo/polish acceptance criteria against the verified repository. Do not redo completed hardening or weaken the SQL/security layer.
+There is no active sprint handoff. Treat the repository as the source of truth and do not infer new scope from the optional future improvements list.
 
 ## 19. Instructions for Future AI Agents
 
@@ -567,16 +563,16 @@ The next agent should begin by reading the Sprint 10 scope and checking remainin
 - **Deterministic schema retrieval:** keyword retrieval is predictable and easy to test; embeddings are deferred until they solve a demonstrated need.
 - **Deterministic visualization:** result shape is sufficient for initial chart selection, avoiding an unnecessary Gemini call and keeping chart metadata testable.
 - **Summary isolation:** summaries run after execution and receive result data only; they cannot influence SQL generation or query execution.
-- **Frontend separation:** the backend owns data interpretation and visualization contracts so the future frontend remains a consumer, not a security or analytics engine.
+- **Frontend separation:** the backend owns data interpretation and visualization contracts; the implemented frontend remains a consumer, not a security or analytics engine.
 - **Migration-owned database:** Alembic provides reproducible schema creation and the seed marker prevents uncontrolled duplicates.
 
 ## 21. Current Git State
 
 - **Branch:** `main`
-- **HEAD:** `d685fef feat(analytics): add result intelligence and visualization engine`
-- **Remote:** `origin/main` points to the same Sprint 6 commit.
-- **Recent sprint commits:** `06169fa` Gemini provider, `3d288f6` AST security, `270e7dd` SQL generation, `5c6de51` analytics API, `71b655a` database, `3588083` foundation.
-- **Working tree before this document:** clean.
-- **Expected state after creating this document:** only the new root `progress.md` should be uncommitted. Do not commit it unless explicitly requested.
+- **HEAD:** `e1291e4 feat(production): harden application for production deployment`.
+- **Remote:** `origin/main` points to the Sprint 9 commit at the time of the Sprint 10 documentation pass.
+- **Recent commits:** Sprint 9 `e1291e4`, Sprint 8 `5639dd7`, Sprint 7 `9554013`, Sprint 6 `d685fef`.
+- **Starting worktree:** clean before Sprint 10 documentation edits.
+- **Current worktree:** documentation-only changes are uncommitted. Do not commit unless explicitly instructed.
 
 No secrets, API keys, passwords, or token values belong in this file.
