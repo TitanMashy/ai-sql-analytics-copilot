@@ -4,7 +4,10 @@ from pydantic import BaseModel, Field
 
 
 class AnalyticsQueryRequest(BaseModel):
-    sql: str = Field(description="A single read-only SELECT statement.")
+    sql: str = Field(
+        max_length=12000,
+        description="A single read-only SELECT statement.",
+    )
 
 
 class AnalyticsValidationResponse(BaseModel):
@@ -26,6 +29,7 @@ class AnalyticsQueryResponse(BaseModel):
 class ErrorBody(BaseModel):
     code: str
     message: str
+    request_id: str | None = None
 
 
 class ErrorResponse(BaseModel):

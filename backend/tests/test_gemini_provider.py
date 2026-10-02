@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import pytest
+from google.genai import errors
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import StaticPool
 
@@ -110,3 +111,54 @@ def test_missing_gemini_key_is_configuration_error() -> None:
         GeminiProvider(Settings(gemini_api_key=None))
 
     assert error.value.code == "LLM_CONFIGURATION_ERROR"
+
+
+@pytest.mark.parametrize(
+    ("provider_error", "expected_code", "expected_status"),
+    [
+        (errors.APIError(429, {"message": "quota exceeded"}), "LLM_RATE_LIMITED", 503),
+        (errors.APIError(404, {"message": "model unavailable"}), "LLM_MODEL_UNAVAILABLE", 503),
+        (
+            errors.APIError(503, {"message": "provider unavailable"}),
+            "LLM_PROVIDER_UNAVAILABLE",
+            503,
+        ),
+        (errors.APIError(504, {"message": "gateway timeout"}), "LLM_TIMEOUT", 504),
+        (TimeoutError("provider timeout"), "LLM_TIMEOUT", 504),
+    ],
+)
+def test_gemini_provider_classifies_provider_failures(
+    provider_error: Exception, expected_code: str, expected_status: int
+) -> None:
+    class FailingModels:
+        def generate_content(self, **kwargs: object) -> None:
+            del kwargs
+            raise provider_error
+
+    provider = GeminiProvider(_settings(), client=SimpleNamespace(models=FailingModels()))
+
+    with pytest.raises(LLMProviderError) as error:
+        provider.generate_sql("show vehicle ids", SchemaRetriever().retrieve("vehicles"))
+
+    assert error.value.code == expected_code
+    assert error.value.status_code == expected_status
+
+
+def test_gemini_client_uses_timeout_and_bounded_transient_retries(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class ClientWithOptions:
+        def __init__(self, *, api_key: str, http_options: object) -> None:
+            captured["api_key"] = api_key
+            captured["http_options"] = http_options
+
+    monkeypatch.setattr("app.llm.gemini_provider.genai.Client", ClientWithOptions)
+    settings = Settings(gemini_api_key="test-key", llm_timeout_seconds=4.5)
+
+    GeminiProvider(settings)
+
+    http_options = captured["http_options"]
+    assert captured["api_key"] == "test-key"
+    assert http_options.timeout == 4500
+    assert http_options.retry_options.attempts == 3
+    assert http_options.retry_options.http_status_codes == [500, 502, 503, 504]

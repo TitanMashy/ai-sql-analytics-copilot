@@ -4,7 +4,8 @@ services:
     environment:
       POSTGRES_DB: app
       POSTGRES_USER: app
-      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      ANALYTICS_DATABASE_PASSWORD: ${ANALYTICS_DATABASE_PASSWORD:?Set ANALYTICS_DATABASE_PASSWORD in .env}
     volumes:
       - ./database/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
@@ -17,24 +18,49 @@ services:
     build:
       context: ./backend
     environment:
-      DATABASE_URL: postgresql+psycopg://app@postgres:5432/app
-      ANALYTICS_DATABASE_URL: postgresql+psycopg://analytics_readonly@postgres:5432/app
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://app:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/app}
+      ANALYTICS_DATABASE_URL: ${ANALYTICS_DATABASE_URL:-postgresql+psycopg://analytics_readonly:${ANALYTICS_DATABASE_PASSWORD:?Set ANALYTICS_DATABASE_PASSWORD in .env}@postgres:5432/app}
       LLM_MODE: ${LLM_MODE:-mock}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-flash-latest}
-      LOG_LEVEL: INFO
-      MAX_RESULT_ROWS: 1000
-      QUERY_TIMEOUT_SECONDS: 10
-      MAX_QUERY_JOINS: 5
-      MAX_QUERY_NESTING: 3
-      MAX_REPAIR_RETRIES: 3
+      APP_ENV: ${APP_ENV:-development}
+      DEBUG: ${DEBUG:-false}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-[]}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MAX_RESULT_ROWS: ${MAX_RESULT_ROWS:-1000}
+      QUERY_TIMEOUT_SECONDS: ${QUERY_TIMEOUT_SECONDS:-10}
+      DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:-5}
+      DATABASE_MAX_OVERFLOW: ${DATABASE_MAX_OVERFLOW:-10}
+      DATABASE_POOL_TIMEOUT_SECONDS: ${DATABASE_POOL_TIMEOUT_SECONDS:-5}
+      DATABASE_POOL_RECYCLE_SECONDS: ${DATABASE_POOL_RECYCLE_SECONDS:-1800}
+      DATABASE_CONNECT_TIMEOUT_SECONDS: ${DATABASE_CONNECT_TIMEOUT_SECONDS:-5}
+      MAX_QUERY_JOINS: ${MAX_QUERY_JOINS:-5}
+      MAX_QUERY_NESTING: ${MAX_QUERY_NESTING:-3}
+      MAX_REPAIR_RETRIES: ${MAX_REPAIR_RETRIES:-3}
+      ENABLE_RESULT_SUMMARY: ${ENABLE_RESULT_SUMMARY:-true}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-30}
+      MAX_QUESTION_LENGTH: ${MAX_QUESTION_LENGTH:-2000}
+      MAX_CONVERSATION_CONTEXT_CHARS: ${MAX_CONVERSATION_CONTEXT_CHARS:-2000}
+      MAX_REQUEST_BODY_BYTES: ${MAX_REQUEST_BODY_BYTES:-16384}
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      RATE_LIMIT_REQUESTS: ${RATE_LIMIT_REQUESTS:-30}
+      RATE_LIMIT_WINDOW_SECONDS: ${RATE_LIMIT_WINDOW_SECONDS:-60}
     ports:
       - "8000:8000"
+    init: true
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     depends_on:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -46,6 +72,17 @@ services:
         INTERNAL_API_URL: http://backend:8000
     ports:
       - "3000:3000"
+    init: true
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     depends_on:
       backend:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5

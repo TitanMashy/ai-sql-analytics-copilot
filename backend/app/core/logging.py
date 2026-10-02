@@ -13,16 +13,24 @@ class StructuredFormatter(logging.Formatter):
         }
         for field in (
             "request_id",
+            "conversation_id",
             "endpoint",
             "execution_time_ms",
+            "request_duration_ms",
+            "llm_latency_ms",
+            "sql_validation_duration_ms",
+            "sql_execution_duration_ms",
             "result_row_count",
             "validation_status",
+            "repair_count",
+            "provider_status_code",
+            "error_type",
             "status_code",
         ):
             if hasattr(record, field):
                 payload[field] = getattr(record, field)
         if record.exc_info:
-            payload["exception"] = self.formatException(record.exc_info)
+            payload["exception_type"] = record.exc_info[0].__name__
         return json.dumps(payload, default=str)
 
 

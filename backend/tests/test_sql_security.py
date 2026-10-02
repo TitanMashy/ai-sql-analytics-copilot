@@ -4,7 +4,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.analytics.service import AnalyticsQueryService, AnalyticsServiceError
 from app.analytics.validator import SQLValidator
-from app.llm.provider import LLMGeneration
+from app.llm.provider import LLMGeneration, LLMProviderError
 from app.services.generation import SQLGenerationService
 
 
@@ -199,3 +199,50 @@ def test_security_violation_during_repair_stops_immediately() -> None:
     assert error.value.code == "QUERY_SECURITY_ERROR"
     assert not error.value.repairable
     assert provider.repair_calls == 1
+
+
+def test_query_timeout_is_not_repaired() -> None:
+    class TimeoutAnalyticsService:
+        def execute(self, sql: str, request_id: str | None = None):
+            del sql, request_id
+            raise AnalyticsServiceError(
+                "QUERY_TIMEOUT",
+                "The analytics query exceeded the configured timeout.",
+                408,
+            )
+
+    provider = RepairProvider(["SELECT id FROM vehicles"])
+    service = SQLGenerationService(provider, analytics_service=TimeoutAnalyticsService())  # type: ignore[arg-type]
+
+    with pytest.raises(AnalyticsServiceError) as error:
+        service.ask("show vehicle ids")
+
+    assert error.value.code == "QUERY_TIMEOUT"
+    assert provider.repair_calls == 0
+
+
+def test_provider_failure_during_repair_stops_before_another_execution() -> None:
+    class FailingRepairProvider(RepairProvider):
+        def repair_sql(self, question, original_sql, error_message, schema_context):
+            self.repair_calls += 1
+            raise LLMProviderError("LLM_PROVIDER_ERROR", "Provider unavailable.", 503)
+
+    class CountingAnalyticsService(AnalyticsQueryService):
+        def __init__(self):
+            query_service = _query_service()
+            super().__init__(engine=query_service.engine)
+            self.calls = 0
+
+        def execute(self, sql: str, request_id: str | None = None):
+            self.calls += 1
+            return super().execute(sql, request_id)
+
+    analytics_service = CountingAnalyticsService()
+    provider = FailingRepairProvider(["SELECT id FROM vehicles"])
+    service = SQLGenerationService(provider, analytics_service=analytics_service)
+
+    with pytest.raises(LLMProviderError):
+        service.ask("show vehicle ids")
+
+    assert provider.repair_calls == 1
+    assert analytics_service.calls == 1

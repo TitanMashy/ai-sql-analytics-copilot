@@ -22,7 +22,8 @@ class OpenAIProvider:
                 503,
             )
         self.client = OpenAI(
-            api_key=settings.openai_api_key, timeout=settings.query_timeout_seconds
+            api_key=settings.openai_api_key.get_secret_value(),
+            timeout=settings.llm_timeout_seconds,
         )
         self.model = settings.openai_model
         self.prompt_builder = prompt_builder or SQLPromptBuilder()
@@ -75,7 +76,10 @@ class OpenAIProvider:
         except LLMProviderError:
             raise
         except Exception as error:
-            logger.exception("OpenAI SQL generation failed")
+            logger.warning(
+                "OpenAI provider request failed",
+                extra={"error_type": type(error).__name__},
+            )
             raise LLMProviderError(
                 "LLM_PROVIDER_ERROR",
                 "The configured LLM provider could not generate SQL.",

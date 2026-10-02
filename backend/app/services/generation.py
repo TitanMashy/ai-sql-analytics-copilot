@@ -1,8 +1,13 @@
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, replace
+from functools import partial
+from time import perf_counter
 
 from app.analytics.service import AnalyticsQueryService, AnalyticsServiceError, QueryResult
 from app.conversation.service import ConversationMemory, get_conversation_memory
+from app.core.metrics import metrics
+from app.core.telemetry import get_request_telemetry
 from app.llm.prompt import SQLPromptBuilder
 from app.llm.provider import LLMGeneration, LLMProvider, LLMProviderError
 from app.services.result_analyzer import AnalyticsResultAnalyzer
@@ -64,9 +69,14 @@ class SQLGenerationService:
     ) -> GeneratedQuery:
         if not question.strip():
             raise LLMProviderError("INVALID_REQUEST", "Question cannot be empty.", 422)
+        telemetry = get_request_telemetry()
+        if telemetry:
+            telemetry.conversation_id = conversation_id
         context = self.retriever.retrieve(question)
         resolved_context = self._resolve_context(conversation_id, conversation_context)
-        generation = self.provider.generate_sql(question, context, resolved_context)
+        generation = self._call_provider(
+            lambda: self.provider.generate_sql(question, context, resolved_context)
+        )
         return self._to_generated_query(question, context, generation)
 
     def ask(
@@ -80,6 +90,9 @@ class SQLGenerationService:
             raise RuntimeError("AnalyticsQueryService is required for ask")
         context = self.retriever.retrieve(question)
         resolved_context = self._resolve_context(conversation_id, conversation_context)
+        telemetry = get_request_telemetry()
+        if telemetry:
+            telemetry.conversation_id = conversation_id
         if conversation_id:
             self.conversation_memory.add_turn(conversation_id, "user", question)
         generated = self.generate(question, resolved_context, conversation_id=conversation_id)
@@ -109,6 +122,12 @@ class SQLGenerationService:
                         "assistant",
                         summary or generated.explanation or "The SQL executed successfully.",
                     )
+                if repair_attempts:
+                    metrics.increment("sql_repair_successes_total")
+                    logger.info(
+                        "analytics SQL repair succeeded",
+                        extra={"request_id": request_id, "repair_count": repair_attempts},
+                    )
                 return AskedQuery(
                     generated=generated,
                     result=result,
@@ -119,17 +138,39 @@ class SQLGenerationService:
                 if not error.repairable or repair_attempts >= self.max_repair_retries:
                     raise
                 repair_attempts += 1
+                metrics.increment("sql_repair_attempts_total")
+                if telemetry:
+                    telemetry.repair_count = repair_attempts
                 logger.info(
                     "repairing analytics SQL",
-                    extra={"repair_attempt": repair_attempts},
+                    extra={"request_id": request_id, "repair_count": repair_attempts},
                 )
-                repaired = self.provider.repair_sql(
+                original_sql = generated.sql
+                repair_message = error.message
+                repair_call = partial(
+                    self.provider.repair_sql,
                     question,
-                    generated.sql,
-                    error.message,
+                    original_sql,
+                    repair_message,
                     context,
                 )
+                repaired = self._call_provider(repair_call)
                 generated = self._to_generated_query(question, context, repaired)
+
+    def _call_provider(self, operation: Callable[[], LLMGeneration]) -> LLMGeneration:
+        started_at = perf_counter()
+        try:
+            return operation()
+        except LLMProviderError:
+            if self.provider.name == "gemini":
+                metrics.increment("gemini_failures_total")
+            raise
+        finally:
+            elapsed_ms = (perf_counter() - started_at) * 1000
+            metrics.observe("llm_latency_ms", elapsed_ms)
+            telemetry = get_request_telemetry()
+            if telemetry:
+                telemetry.llm_latency_ms += elapsed_ms
 
     def _resolve_context(
         self,

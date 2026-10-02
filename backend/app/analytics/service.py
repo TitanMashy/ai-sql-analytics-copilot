@@ -4,10 +4,13 @@ from time import perf_counter
 from typing import Any
 
 from sqlalchemy import Engine, text
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
 from app.analytics.serialization import normalize_rows
 from app.analytics.validator import SQLValidator, ValidationResult
+from app.core.metrics import metrics
+from app.core.telemetry import get_request_telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -55,16 +58,28 @@ class AnalyticsQueryService:
         self.max_result_rows = max_result_rows
         self.query_timeout_seconds = query_timeout_seconds
 
-    def validate(self, sql: str) -> ValidationResult:
+    def validate(self, sql: str, request_id: str | None = None) -> ValidationResult:
+        started_at = perf_counter()
         result = self.validator.validate(sql)
+        elapsed_ms = (perf_counter() - started_at) * 1000
+        metrics.observe("sql_validation_latency_ms", elapsed_ms)
+        telemetry = get_request_telemetry()
+        if telemetry:
+            telemetry.sql_validation_latency_ms += elapsed_ms
+        if not result.valid:
+            metrics.increment("validation_failures_total")
         logger.info(
             "analytics query validation completed",
-            extra={"validation_status": "valid" if result.valid else "invalid"},
+            extra={
+                "request_id": request_id,
+                "validation_status": "valid" if result.valid else "invalid",
+                "sql_validation_duration_ms": round(elapsed_ms, 2),
+            },
         )
         return result
 
     def execute(self, sql: str, request_id: str | None = None) -> QueryResult:
-        validation = self.validate(sql)
+        validation = self.validate(sql, request_id=request_id)
         if not validation.valid:
             error_code = validation.error_code
             status_code = 400
@@ -94,9 +109,18 @@ class AnalyticsQueryService:
                 columns = list(result.keys())
         except SQLAlchemyError as error:
             elapsed_ms = (perf_counter() - started_at) * 1000
-            logger.exception(
+            metrics.observe("sql_execution_latency_ms", elapsed_ms)
+            metrics.increment("sql_execution_failures_total")
+            telemetry = get_request_telemetry()
+            if telemetry:
+                telemetry.sql_execution_latency_ms += elapsed_ms
+            logger.warning(
                 "analytics query execution failed",
-                extra={"request_id": request_id, "execution_time_ms": round(elapsed_ms, 2)},
+                extra={
+                    "request_id": request_id,
+                    "execution_time_ms": round(elapsed_ms, 2),
+                    "error_type": type(error).__name__,
+                },
             )
             message = str(error).lower()
             if "statement timeout" in message or "query_canceled" in message:
@@ -104,6 +128,12 @@ class AnalyticsQueryService:
                     "QUERY_TIMEOUT",
                     "The analytics query exceeded the configured timeout.",
                     408,
+                ) from error
+            if isinstance(error, SQLAlchemyTimeoutError):
+                raise AnalyticsServiceError(
+                    "DATABASE_POOL_TIMEOUT",
+                    "The analytics database is busy. Please retry later.",
+                    503,
                 ) from error
             if "permission denied" in message or "must be owner" in message:
                 raise AnalyticsServiceError(
@@ -117,6 +147,14 @@ class AnalyticsQueryService:
                     "The requested table does not exist.",
                     404,
                     repairable=True,
+                ) from error
+            if isinstance(error, OperationalError) and (
+                error.connection_invalidated or self.engine.dialect.name != "sqlite"
+            ):
+                raise AnalyticsServiceError(
+                    "DATABASE_UNAVAILABLE",
+                    "The analytics database is temporarily unavailable.",
+                    503,
                 ) from error
             raise AnalyticsServiceError(
                 "QUERY_EXECUTION_ERROR",
@@ -133,6 +171,10 @@ class AnalyticsQueryService:
             )
 
         elapsed_ms = (perf_counter() - started_at) * 1000
+        metrics.observe("sql_execution_latency_ms", elapsed_ms)
+        telemetry = get_request_telemetry()
+        if telemetry:
+            telemetry.sql_execution_latency_ms += elapsed_ms
         normalized_rows = normalize_rows([row._mapping for row in rows])
         column_types = {
             column: self._infer_column_type([row.get(column) for row in normalized_rows])

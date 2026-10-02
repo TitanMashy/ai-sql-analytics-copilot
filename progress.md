@@ -13,10 +13,10 @@ The technically interesting parts are the modular LLM provider boundary, determi
 ## 2. Current Status
 
 ```text
-Current status: Sprints 1–8 COMPLETE
-Next sprint: Sprint 9
+Current status: Sprints 1–9 COMPLETE
+Next sprint: Sprint 10
 Project is NOT finished.
-Production hardening and final demo preparation remain.
+Final demo preparation and acceptance polish remain.
 ```
 
 | Sprint | Status | Description |
@@ -29,7 +29,7 @@ Production hardening and final demo preparation remain.
 | Sprint 6 | COMPLETE | Result analyzer, KPI detection, deterministic visualization selection/validation, summaries, data-quality warnings, frontend-ready `/ask` responses, and visualization documentation. |
 | Sprint 7 | COMPLETE | Bounded in-memory conversation context, follow-up-aware SQL generation, and conversation endpoints. |
 | Sprint 8 | COMPLETE | Responsive Next.js dashboard, typed API integration, charts/results, Docker service, and frontend validation. |
-| Sprint 9 | NOT STARTED | Production hardening, observability, performance, and deployment improvements. |
+| Sprint 9 | COMPLETE | Production configuration, API limits/rate controls, metrics, health/readiness, provider reliability, frontend failure handling, deployment docs, and CI. |
 | Sprint 10 | NOT STARTED | Final polish, documentation, demo preparation, and recruiter-facing presentation. |
 
 The Git history contains one feature commit per completed sprint: `3588083`, `71b655a`, `5c6de51`, `270e7dd`, `3d288f6`, `06169fa`, and `d685fef`.
@@ -55,6 +55,15 @@ Implemented capabilities:
 - Visualization field validation and table fallback.
 - Deterministic grounded summaries, empty-result handling, NULL warnings, and configurable summary enablement.
 - Structured JSON logs with request ID, endpoint, validation status, execution time, row count, and status code.
+- Production settings for environment/debug/docs, secret masking, exact CORS origins, validated pool/provider/request/rate-limit configuration.
+- Configurable request-body, question, conversation-context, turn, and SQL size limits.
+- Process-local sliding-window throttling with structured 429 responses for generation, ask, conversation creation, and turn append.
+- Configurable PostgreSQL pools with pre-ping, recycle, checkout/connect timeouts, and per-process shared engines.
+- Request-correlated structured errors, safe response/security headers, health/readiness routes, and process-local JSON metrics.
+- Gemini timeout, bounded exponential retries for transient 5xx responses, and explicit rate-limit/model/timeout/malformed-response classification.
+- Bounded repair metrics and tests confirming timeouts/security/provider failures do not proceed through unsafe repair/execution.
+- Next.js timeout/network error codes, runtime result validation, retry and duplicate-submit handling, and chart/application error boundaries.
+- Non-root production Docker images, distinct PostgreSQL owner/read-only credentials for fresh clusters, Compose health checks, deployment/security docs, and GitHub Actions CI.
 
 Not implemented: authentication/authorization, vector schema retrieval, tenant-level policy enforcement, and a cost-based query planner.
 
@@ -150,8 +159,10 @@ Responsibilities:
 
 ### Infrastructure
 
-- Docker Compose services: `postgres`, `backend`, and `frontend`
-- Backend Dockerfile installs the editable project with development dependencies and copies application/Alembic files.
+- Docker Compose services: `postgres`, `backend`, and `frontend`; health gates are PostgreSQL -> backend -> frontend.
+- Backend Docker image installs runtime dependencies only, runs as non-root, and uses a read-only root filesystem in Compose.
+- Frontend uses the standalone Next.js output and non-root runtime.
+- GitHub Actions runs backend lint/tests, frontend lint/tests/build, and Compose configuration validation without Gemini credentials.
 - `.env.example` documents configuration; `.env` is ignored and must never be committed.
 - Make targets include `dev`, `test`, `lint`, `format`, `migrate`, `seed`, `verify-permissions`, `docker-up`, and `docker-down`.
 
@@ -280,7 +291,11 @@ All routes are under `/api/v1` unless noted.
 
 | Method | Route | Purpose |
 |---|---|---|
+| GET | `/health` | Dependency-free liveness probe. |
+| GET | `/health/ready` | Checks application DB, analytics DB, and selected provider configuration. |
 | GET | `/api/v1/health` | Checks application database connectivity. |
+| GET | `/api/v1/health/ready` | Versioned readiness alias. |
+| GET | `/api/v1/metrics` | Process-local counters and latency averages; restrict at the network boundary. |
 | POST | `/api/v1/analytics/query` | Validates and executes direct read-only SQL. Request: `{ "sql": "..." }`. Response: columns, rows, row count, execution time. |
 | POST | `/api/v1/analytics/validate` | Returns normalized SQL, errors, warnings, referenced tables, and complexity metadata without executing. |
 | POST | `/api/v1/analytics/generate` | Converts `{ "question": "..." }` into structured SQL without execution. Returns question, SQL, explanation, tables, schema context, provider, and confidence. |
@@ -290,7 +305,7 @@ All routes are under `/api/v1` unless noted.
 | GET | `/api/v1/schema/tables/{table_name}` | Returns one table's columns and relationships. |
 | GET | `/docs` | FastAPI interactive OpenAPI documentation. |
 
-Structured error codes include validation, parse, security, permission, timeout, table-not-found, provider, invalid-request, and execution errors.
+Structured errors use `{ "error": { "code": "...", "message": "...", "request_id": "..." } }`. Codes include validation, parse, security, permission, timeout, table-not-found, provider, invalid-request, request-too-large, and rate-limit errors.
 
 ## 12. Repository Structure
 
@@ -304,7 +319,7 @@ ai-sql-analytics-copilot/
 │   ├── app/
 │   │   ├── analytics/       # query execution, AST validation, normalization
 │   │   ├── api/             # FastAPI route modules
-│   │   ├── core/            # settings and structured logging
+│   │   ├── core/            # settings, metrics, middleware, telemetry, logging
 │   │   ├── db/              # engines, ORM base, seed, schema metadata
 │   │   ├── llm/             # provider interface, Gemini, mock, parser, prompts
 │   │   ├── models/           # SQLAlchemy entities
@@ -321,8 +336,11 @@ ai-sql-analytics-copilot/
 │   ├── architecture.md
 │   ├── business-definitions.md
 │   ├── database-schema.md
+│   ├── deployment.md
+│   ├── production-security-review.md
 │   ├── security.md
 │   └── visualization.md
+├── .github/workflows/ci.yml
 ├── frontend/                # Next.js dashboard and tests
 ├── .env.example
 ├── docker-compose.yml
@@ -337,18 +355,35 @@ Values below are documented formats only. Real values belong in ignored `.env`, 
 
 | Variable | Required | Purpose / example |
 |---|---|---|
-| `DATABASE_URL` | Runtime/app DB | Migration and owner connection, e.g. `postgresql+psycopg://app@postgres:5432/app`. |
-| `ANALYTICS_DATABASE_URL` | Analytics execution | Restricted read-only connection, e.g. `postgresql+psycopg://analytics_readonly@postgres:5432/app`. |
+| `APP_ENV` | No; default `development` | `development`, `test`, or `production`; production rejects SQLite and mock mode. |
+| `DEBUG` | No; default `false` | Framework debug; always effectively disabled in production. |
+| `CORS_ALLOWED_ORIGINS` | No; default `[]` | JSON array of exact origins; credentials are not enabled. |
+| `DATABASE_URL` | Runtime/app DB | Migration and owner connection; production must use PostgreSQL. |
+| `ANALYTICS_DATABASE_URL` | Analytics execution | Restricted read-only PostgreSQL connection, separate from the owner URL. |
+| `POSTGRES_PASSWORD` | Fresh Compose database | Owner role password; supply at runtime only. |
+| `ANALYTICS_DATABASE_PASSWORD` | Fresh Compose database | Distinct read-only role password; supply at runtime only. |
 | `GEMINI_API_KEY` | Only when `LLM_MODE=gemini` | Google Gemini credential; never print or commit it. |
 | `GEMINI_MODEL` | No; default `gemini-flash-latest` | Gemini model name. |
-| `LLM_MODE` | No; default `mock` | `mock` for deterministic tests/demos or `gemini` for real provider mode. |
+| `LLM_MODE` | No; default `mock` | `mock`, `gemini`, or legacy `openai`; mock is disabled in production. |
 | `LOG_LEVEL` | No; default `INFO` | Structured application log threshold. |
+| `LLM_TIMEOUT_SECONDS` | No; default `30` | Provider timeout; transient Gemini 5xx retries are bounded. |
+| `DATABASE_POOL_SIZE` | No; default `5` | SQLAlchemy pool size per engine. |
+| `DATABASE_MAX_OVERFLOW` | No; default `10` | Connections above pool size. |
+| `DATABASE_POOL_TIMEOUT_SECONDS` | No; default `5` | Pool checkout timeout. |
+| `DATABASE_POOL_RECYCLE_SECONDS` | No; default `1800` | Connection recycle interval. |
+| `DATABASE_CONNECT_TIMEOUT_SECONDS` | No; default `5` | PostgreSQL connect timeout. |
 | `MAX_RESULT_ROWS` | No; default `1000` | Maximum rows fetched/returned by analytics execution. |
 | `QUERY_TIMEOUT_SECONDS` | No; default `10` | PostgreSQL statement timeout. |
 | `MAX_QUERY_JOINS` | No; default `5` | AST complexity threshold. |
 | `MAX_QUERY_NESTING` | No; default `3` | AST nesting threshold. |
 | `MAX_REPAIR_RETRIES` | No; default `3` | Maximum repair attempts for repairable query errors. |
 | `ENABLE_RESULT_SUMMARY` | No; default `true` | Enables deterministic post-query summaries. |
+| `MAX_QUESTION_LENGTH` | No; default `2000` | Maximum natural-language question length. |
+| `MAX_CONVERSATION_CONTEXT_CHARS` | No; default `2000` | Maximum caller context or conversation turn length. |
+| `MAX_REQUEST_BODY_BYTES` | No; default `16384` | Maximum fully buffered request body; capped at 1 MiB. |
+| `RATE_LIMIT_ENABLED` | No; default `true` | Enable in-process sliding-window limits. |
+| `RATE_LIMIT_REQUESTS` | No; default `30` | Requests allowed per endpoint/client window. |
+| `RATE_LIMIT_WINDOW_SECONDS` | No; default `60` | Sliding window duration. |
 
 The code also retains legacy `OPENAI_API_KEY` and `OPENAI_MODEL` settings/provider compatibility from earlier work, but the current documented/configured provider path is Gemini. Do not add those legacy secrets to new deployments unless deliberately reactivating that provider.
 
@@ -363,8 +398,11 @@ Tests live in `backend/tests` and use pytest. They cover:
 - AST security: allowed queries, CTEs, joins, aggregates, DML/DDL rejection, system tables, dangerous functions, unknown identifiers, complexity, limits, prompt injection, and repair security.
 - Result intelligence: KPI formats, line/bar/pie/table selection, visualization validation, formatting, empty results, warnings, grounded summaries, and summary failure fallback.
 - PostgreSQL read-only permissions via a marked integration test when a PostgreSQL analytics URL is configured.
+- Production settings/secrets, CORS middleware configuration, request/body/context limits, rate limiting, health/readiness, error sanitization, pool/outage/timeouts, and metrics.
+- Gemini timeout/rate-limit/5xx/model-unavailable/malformed responses and bounded retry configuration.
+- Six-query SQLite-backed analytics smoke coverage with SQL execution and total API latency recorded as test properties.
 
-Frontend tests live in `frontend/components/analytics/analytics-dashboard.test.tsx` and cover successful analytics rendering and visible backend failures. Frontend checks are `npm test`, `npm run lint`, and `npm run build` from `frontend/`.
+Frontend tests live in `frontend/lib/api.test.ts` and `frontend/components/analytics/analytics-dashboard.test.tsx`; they cover API failure codes, network/timeout/malformed responses, invalid visualization metadata, empty results, conversation failures, retries, and duplicate submissions. Frontend checks are `npm test`, `npm run lint`, and `npm run build` from `frontend/`.
 
 Run the standard checks from the repository root:
 
@@ -373,7 +411,8 @@ make test
 make lint
 ```
 
-The last verified local run reported `70 passed, 1 skipped`; the skip was the PostgreSQL-only permission test outside the live Compose environment. `make verify-permissions` was verified against the running PostgreSQL container. Tests do not require Gemini credentials because provider tests are mocked and the default test path is deterministic.
+An earlier Sprint 9 run reported `98 passed, 1 skipped`; the skip is the PostgreSQL-only permission test without its integration configuration. It is superseded by the latest full rerun above. Backend Ruff passed. Tests use mocked providers and do not require Gemini credentials.
+Latest rerun, superseding the earlier 98-pass run below: backend `99 passed, 1 skipped` (PostgreSQL permission integration not configured); frontend `11 passed`, with lint and production build passing.
 
 ## 15. Completed Sprint Summary
 
@@ -426,10 +465,21 @@ The last verified local run reported `70 passed, 1 skipped`; the skip was the Po
 - **Verification:** frontend tests and lint pass; Next.js production build and frontend Docker image build pass; full Compose stack started and `/api/v1/analytics/ask` smoke-tested through the frontend proxy. The current local demo uses a transient `LLM_MODE=mock` override; `.env` was not changed.
 - **Significance:** completes the user-facing analytics workflow without moving business or SQL security rules into the browser.
 
+### Sprint 9 — Production Hardening, Observability, and Deployment
+
+- **Objective:** harden the current modular monolith as a production-oriented MVP without adding infrastructure.
+- **Implementation:** production/development settings, secret masking, configurable CORS and request/rate limits, structured request-correlated errors, security headers, SQLAlchemy pool controls, health/readiness, process-local metrics, detailed request/provider/validation/SQL/repair telemetry, bounded Gemini transient retries, classified provider/database errors, improved frontend retries/error boundaries, non-root/minimal containers, distinct DB role credentials, GitHub Actions CI, deployment and security review documents, and representative SQL/API latency smoke coverage.
+- **Validation:** 99 backend tests passed with one PostgreSQL-only permission test skipped; 11 frontend tests passed; Ruff, ESLint, Next production build, Compose config, both container builds, container health checks, and full-stack health/API/metrics smoke tests passed. Production frontend audit reported zero vulnerabilities. A fresh PostgreSQL 16 init verified distinct owner/read-only password authentication.
+- **Significance:** improves reliability and operational clarity while preserving the existing SQL security boundary; multi-instance and tenant controls remain explicit future work.
+
 ## 16. Known Limitations
 
 - **Conversation persistence is in-memory:** sessions are not durable across backend restarts and are not backed by user identity.
 - **Frontend conversation history is client state:** no account-level saved history or reload persistence is implemented.
+- **Rate limiting and metrics are process-local:** use a shared gateway/metrics backend before running multiple application replicas.
+- **Gemini readiness checks configuration, not remote quota/availability:** provider outages are surfaced safely when requests execute.
+- **PostgreSQL init passwords apply only to fresh clusters:** existing roles require explicit password rotation and URL updates.
+- **Compose port mappings target local development:** production should restrict backend/database/metrics access behind private networking and a trusted TLS gateway.
 - **No authentication or tenant authorization:** required before production multi-tenant use; database row ownership is modeled but API authorization is not implemented.
 - **No cost-based query planner:** query controls use AST heuristics, join/nesting limits, result limits, and timeouts; they do not estimate database cost.
 - **AST validator is defense in depth:** SQLGlot validation is stronger than regex but cannot be the sole security mechanism.
@@ -441,7 +491,7 @@ The last verified local run reported `70 passed, 1 skipped`; the skip was the Po
 
 ## 17. Remaining Roadmap
 
-Sprints 1–8 are complete. Sprints 9–10 remain planned and **NOT IMPLEMENTED**.
+Sprints 1–9 are complete. Sprint 10 remains planned and **NOT IMPLEMENTED**.
 
 ### Sprint 7 — Conversational Analytics and Context Management
 
@@ -453,7 +503,7 @@ Complete. The Next.js dashboard consumes `/ask` through a same-origin proxy and 
 
 ### Sprint 9 — Production Hardening, Observability, Performance, and Deployment
 
-Harden authentication/tenant isolation, query-cost and connection behavior, metrics/tracing/log aggregation, reliability/retries, deployment configuration, secrets management, and production database operations.
+Complete. Production configuration, API abuse/request limits, pooling, metrics, request-correlated logging/errors, readiness/liveness, Gemini retry/error classification, safe bounded repair, frontend failure handling, Docker hardening, CI, deployment/security docs, and SQL/API smoke timing are implemented. Authentication/tenant isolation, shared multi-instance operations, and deployment gateway controls remain limitations, not Sprint 9 work claims.
 
 ### Sprint 10 — Final Polish and Demo Preparation
 
@@ -463,25 +513,25 @@ Complete end-to-end polish, user-facing documentation, sample/demo flows, screen
 
 ```text
 Current stopping point:
-Sprints 1–8 are complete.
+Sprints 1–9 are complete.
 
 Next task:
-Implement Sprint 9: production hardening, observability, performance, and deployment.
+Implement Sprint 10: final polish and demo preparation.
 
-Do not redo Sprints 1–8.
+Do not redo Sprints 1–9.
 
 First:
 1. Read progress.md.
 2. Inspect the current repository and Git state.
 3. Verify the current backend/frontend tests and Docker health status.
 4. Understand the existing UI, provider, retrieval, validation, execution, and result-intelligence boundaries.
-5. Implement only Sprint 9 unless the user changes scope.
-6. Preserve existing APIs and SQL security boundaries unless Sprint 9 explicitly requires a change.
+5. Implement only Sprint 10 unless the user changes scope.
+6. Preserve existing APIs and SQL security boundaries unless Sprint 10 explicitly requires a change.
 7. Run relevant tests and the complete suite where practical.
 8. Update progress.md after completing the sprint.
 ```
 
-The next agent should begin by reading the Sprint 9 scope and checking production-readiness risks against the existing backend and frontend boundaries. Do not redo the completed frontend or weaken the SQL/security layer.
+The next agent should begin by reading the Sprint 10 scope and checking remaining demo/polish acceptance criteria against the verified repository. Do not redo completed hardening or weaken the SQL/security layer.
 
 ## 19. Instructions for Future AI Agents
 

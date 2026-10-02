@@ -6,6 +6,9 @@ BEGIN
 END
 $$;
 
+\getenv analytics_password ANALYTICS_DATABASE_PASSWORD
+SELECT format('ALTER ROLE analytics_readonly PASSWORD %L', :'analytics_password') \gexec
+
 GRANT CONNECT ON DATABASE app TO analytics_readonly;
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO analytics_readonly;

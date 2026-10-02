@@ -49,10 +49,11 @@ def execute_analytics_query(
     responses={422: {"model": ErrorResponse, "description": "Invalid request body"}},
 )
 def validate_analytics_query(
+    request: Request,
     payload: AnalyticsQueryRequest,
     service: AnalyticsQueryService = Depends(get_analytics_query_service),  # noqa: B008
 ) -> AnalyticsValidationResponse:
-    result = service.validate(payload.sql)
+    result = service.validate(payload.sql, request_id=request.state.request_id)
     return AnalyticsValidationResponse(
         valid=result.valid,
         normalized_sql=result.normalized_sql,

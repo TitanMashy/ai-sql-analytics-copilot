@@ -86,8 +86,10 @@ def test_nonexistent_table_returns_table_error(client: TestClient) -> None:
     )
 
     assert response.status_code == 404
-    assert response.json() == {
-        "error": {"code": "TABLE_NOT_FOUND", "message": "The requested table does not exist."}
+    assert response.json()["error"] == {
+        "code": "TABLE_NOT_FOUND",
+        "message": "The requested table does not exist.",
+        "request_id": response.headers["X-Request-ID"],
     }
 
 

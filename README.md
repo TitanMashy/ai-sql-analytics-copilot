@@ -1,26 +1,23 @@
 # AI SQL Analytics Copilot
 
-The AI SQL Analytics Copilot is a modular monolith for turning natural-language analytics questions into safe, explainable SQL workflows. Its Next.js dashboard consumes the backend's validated analytics responses and presents conversational results, KPIs, charts, tables, and generated SQL.
+The AI SQL Analytics Copilot turns natural-language fleet questions into safe, explainable SQL workflows. Its Next.js dashboard presents backend-validated results as conversations, KPIs, charts, tables, and generated SQL.
 
 ## Architecture
 
-See [docs/architecture.md](docs/architecture.md) for the architecture diagram, [docs/database-schema.md](docs/database-schema.md) for the database design, and [docs/business-definitions.md](docs/business-definitions.md) for metric definitions. SQL validation and all business decisions remain backend-owned.
+The system is a modular monolith: Next.js presentation layer -> FastAPI -> schema/business context -> Gemini or mock provider -> SQLGlot validation -> PostgreSQL read-only execution -> result intelligence. SQL generation, validation, metric definitions, summaries, and visualization selection remain backend-owned.
 
-## Technology Stack
+See [docs/architecture.md](docs/architecture.md), [docs/database-schema.md](docs/database-schema.md), [docs/business-definitions.md](docs/business-definitions.md), [docs/deployment.md](docs/deployment.md), and [docs/production-security-review.md](docs/production-security-review.md).
 
-- Python 3.12+
-- FastAPI and Pydantic
-- SQLAlchemy and psycopg
-- Google Gemini SDK with a provider abstraction
-- PostgreSQL
-- Alembic migrations
-- pytest and Ruff
-- Docker Compose
-- Next.js 16, React 19, TypeScript, Tailwind CSS, Recharts, and Vitest
+## Stack
 
-## Local Setup
+- Python 3.12+, FastAPI, Pydantic, SQLAlchemy, psycopg, SQLGlot, Alembic
+- PostgreSQL 16, Gemini SDK, deterministic mock provider
+- Next.js 16, React 19, TypeScript, Tailwind CSS, Recharts, Vitest
+- Docker Compose, pytest, Ruff, GitHub Actions
 
-Create a virtual environment and install the backend development dependencies:
+## Local Development
+
+Backend virtual environment and dependencies:
 
 ```bash
 cd backend
@@ -29,82 +26,11 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-Copy `.env.example` to `.env` when you need to customize environment values. The application has local SQLite defaults, so the API can also be run without a `.env` file:
+Without `.env`, the backend uses local SQLite defaults. Start it with `make dev`; the API is at http://localhost:8000. `GET /health` is liveness, `GET /health/ready` checks required databases/provider configuration, and development API docs are at `/docs`.
 
-```bash
-make dev
-```
+To use a configured PostgreSQL database, run `make migrate` and `make seed`. Seeding is deterministic and idempotent.
 
-The API is available at http://localhost:8000 and the health endpoint is http://localhost:8000/api/v1/health.
-
-To create the schema and deterministic demo dataset against the configured database:
-
-```bash
-make migrate
-make seed
-```
-
-Running `make seed` again is idempotent and reports `already seeded`.
-
-## Analytics API
-
-The direct SQL API is an internal execution surface and does not call Gemini. It parses SQL with SQLGlot, enforces the application-table allowlist and read-only rules, executes through `ANALYTICS_DATABASE_URL` as `analytics_readonly`, normalizes database values to JSON, and enforces result, timeout, and complexity limits.
-
-Validate a query:
-
-```bash
-curl -X POST http://localhost:8000/api/v1/analytics/validate \
-	-H 'Content-Type: application/json' \
-	-d '{"sql":"SELECT COUNT(*) AS active_vehicles FROM vehicles WHERE status = '\''active'\''"}'
-```
-
-Execute a query:
-
-```bash
-curl -X POST http://localhost:8000/api/v1/analytics/query \
-	-H 'Content-Type: application/json' \
-	-d '{"sql":"SELECT COUNT(*) AS active_vehicles FROM vehicles WHERE status = '\''active'\''"}'
-```
-
-The response contains `columns`, JSON-safe `rows`, `row_count`, and `execution_time_ms`. Rejected queries return a structured `error` object. Schema metadata is available at `/api/v1/schema`, `/api/v1/schema/tables`, and `/api/v1/schema/tables/{table_name}`. Interactive OpenAPI documentation is available at `/docs`.
-
-Example analytics SQL is defined in [backend/app/sql/examples.py](backend/app/sql/examples.py), including revenue, utilization, idle time, fuel, and maintenance queries.
-
-See [docs/security.md](docs/security.md) for the threat model and validation rules. AST validation is defense in depth, not a guarantee; database privileges and future tenant isolation remain essential.
-
-## Natural-Language API
-
-Mock mode works without an API key and is the default. It supports representative fleet questions and returns SQL without executing it:
-
-```bash
-curl -X POST http://localhost:8000/api/v1/analytics/generate \
-	-H 'Content-Type: application/json' \
-	-d '{"question":"What were the top 10 customers by revenue?"}'
-```
-
-The optional combined endpoint generates SQL, sends it through the existing validator, executes it through the read-only analytics database, and adds deterministic KPI, visualization, warning, and summary metadata:
-
-```bash
-curl -X POST http://localhost:8000/api/v1/analytics/ask \
-	-H 'Content-Type: application/json' \
-	-d '{"question":"What is the total number of active vehicles?"}'
-```
-
-For follow-up questions, pass a `conversation_id` to continue the same analytic thread with bounded context retention. The system keeps only the recent turns and trims the history to a safe prompt budget rather than forwarding the entire transcript:
-
-```bash
-curl -X POST http://localhost:8000/api/v1/analytics/ask \
-	-H 'Content-Type: application/json' \
-	-d '{"question":"Now compare that to the prior month.","conversation_id":"fleet-ops-1"}'
-```
-
-Set `LLM_MODE=gemini`, `GEMINI_API_KEY`, and `GEMINI_MODEL` to use the official Google Gemini provider. Gemini structured output is parsed through the existing response parser. Provider output is untrusted: `tables_used`, confidence, and generated SQL never bypass validation. The generation prompt contains only relevant schema metadata and business definitions, never credentials or database URLs. See [docs/conversation-context.md](docs/conversation-context.md) for the bounded memory design.
-
-The `/ask` response is frontend-ready: `kpi` is returned for single aggregate values, `visualization` is selected deterministically from result shape, `warnings` covers empty or low-quality data, and `summary` is grounded in the returned rows. Set `ENABLE_RESULT_SUMMARY=false` to disable summaries without affecting SQL execution.
-
-## Frontend
-
-Run the dashboard locally in a separate terminal:
+Run the frontend separately:
 
 ```bash
 cd frontend
@@ -112,39 +38,63 @@ npm ci
 npm run dev
 ```
 
-Open http://localhost:3000. The Next.js server proxies `/api/*` to `http://localhost:8000` by default, so browser requests remain same-origin. Set `INTERNAL_API_URL` to change the proxy destination. The frontend only renders backend-provided results; it does not generate or validate SQL.
+Open http://localhost:3000. Next.js proxies `/api/*` to `http://localhost:8000` by default, keeping browser calls same-origin. `INTERNAL_API_URL` changes the server-side proxy destination. The browser receives no provider or database credentials.
 
-## Docker
+## APIs and Security
 
-Start PostgreSQL, the backend, and the frontend with:
+- `POST /api/v1/analytics/generate` generates SQL without executing it.
+- `POST /api/v1/analytics/ask` generates, validates, executes, and returns result intelligence.
+- `POST /api/v1/analytics/query` and `/validate` expose the internal direct-SQL surface.
+- `GET /api/v1/metrics` returns process-local counters and latency averages.
+
+Errors use `{ "error": { "code": "...", "message": "...", "request_id": "..." } }`. Requests are size- and length-limited; generate/ask/conversation writes have configurable process-local rate limits. PostgreSQL statement timeout, row limits, table/column allowlists, dangerous-function restrictions, and AST validation remain enforced for generated and repaired SQL. Generated SQL is always untrusted.
+
+The analytics DB uses a separate `analytics_readonly` role with a distinct password. Do not grant it writes or use application-owner credentials for analytics execution. See [docs/security.md](docs/security.md) for SQL controls and [docs/production-security-review.md](docs/production-security-review.md) for implemented controls versus recommended future controls. AST validation is defense in depth, not a complete security guarantee.
+
+Set `LLM_MODE=gemini`, `GEMINI_API_KEY`, and `GEMINI_MODEL` for Gemini. Mock mode requires no key and is disabled in production. Provider failures are bounded and classified; generated SQL is never executed after provider failure.
+
+## Docker Compose
+
+Copy `.env.example` to `.env`, replace both owner and read-only password placeholders with distinct credentials, and keep `.env` out of Git. Initialize and seed the database before starting the application:
 
 ```bash
-LLM_MODE=mock docker compose up --build
+docker compose up -d postgres
+docker compose run --rm backend alembic upgrade head
+docker compose run --rm backend python -m app.db.seed
+docker compose up --build -d
 ```
 
-Stop the services with:
+Dashboard: http://localhost:3000. API: http://localhost:8000. Compose waits for PostgreSQL and backend readiness. The backend container is non-root with a read-only root filesystem, and both application images have health checks. Stop with `docker compose down`; do not add `--volumes` unless deleting database state is intended.
 
-```bash
-docker compose down
-```
+The PostgreSQL init script sets the `analytics_readonly` password only for new clusters. Changing environment variables does not rotate credentials in an already-initialized database; rotate both roles explicitly and update both connection URLs.
 
-The Compose setup waits for PostgreSQL to become healthy before starting the backend.
-The frontend is available at http://localhost:3000 and waits for the backend health check before starting.
-The mock provider makes the demo deterministic and does not require a Gemini key. To use Gemini, configure `LLM_MODE=gemini` and `GEMINI_API_KEY` in `.env`, then run `docker compose up --build`.
-The PostgreSQL initialization script creates `analytics_readonly`; it receives `SELECT` on application tables through default privileges and is not granted write or DDL permissions.
+## Configuration and Operations
 
-## Testing and Linting
+`APP_ENV=production` disables debug/docs and rejects SQLite URLs and mock LLM mode. Configure exact `CORS_ALLOWED_ORIGINS` only when direct cross-origin browser access is required; the Next proxy is same-origin by default. Pool sizes, connection/query/provider timeouts, request limits, rate limits, repair attempts, and result caps are environment-configurable. Do not put real secrets in image build args, source control, or logs.
+
+`GET /health` is liveness; `GET /health/ready` checks application and analytics DBs plus provider configuration. JSON logs carry request/conversation IDs and LLM, validation, SQL, repair, row-count, total-duration, and response-status metadata without logging questions, SQL, API keys, or full URLs. Restrict `/api/v1/metrics` to a trusted network.
+
+## Testing and CI
+
+Backend:
 
 ```bash
 make test
 make lint
 ```
 
-Frontend checks:
+Frontend:
 
 ```bash
 cd frontend
-npm test
+npm ci
+npm test -- --run
 npm run lint
 npm run build
 ```
+
+The backend smoke test exercises active vehicles, total revenue, top customers, monthly revenue, idle time, and fuel queries; it records SQL and total API latency. GitHub Actions runs backend install/lint/tests, frontend install/lint/tests/build, and Compose configuration validation using mock mode without a Gemini key.
+
+## Limitations
+
+There is no authentication, tenant authorization, durable conversation storage, shared multi-instance rate limiter, or external metrics aggregation. Rate limits and metrics are process-local; the metrics endpoint is unauthenticated. Do not expose customer data as a public multi-tenant service without adding those controls. This is a production-oriented MVP, not an enterprise security certification. See [docs/deployment.md](docs/deployment.md) for deployment steps and operational caveats.

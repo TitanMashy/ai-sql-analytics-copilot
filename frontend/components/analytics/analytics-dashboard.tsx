@@ -1,12 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { BarChart3, TriangleAlert } from "lucide-react";
 
 import { AnalyticsResults } from "@/components/analytics/analytics-results";
 import { QuestionComposer } from "@/components/analytics/question-composer";
 import { AppSidebar, type ConversationListItem } from "@/components/layout/app-sidebar";
-import { askQuestion, createConversation } from "@/lib/api";
+import { ApiError, askQuestion, createConversation } from "@/lib/api";
 import type { AskResponse } from "@/types/api";
 
 type StatusKey = "idle" | "loading" | "error";
@@ -22,9 +22,11 @@ function createTitleFromQuestion(question: string) {
 }
 
 export function AnalyticsDashboard() {
+  const submissionInProgress = useRef(false);
   const [draft, setDraft] = useState("");
   const [status, setStatus] = useState<StatusKey>("idle");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ code: string; message: string; retryable: boolean } | null>(null);
+  const [lastFailedQuestion, setLastFailedQuestion] = useState<string | null>(null);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [threads, setThreads] = useState<ConversationThread[]>([]);
 
@@ -42,18 +44,21 @@ export function AnalyticsDashboard() {
       setThreads((previous) => [thread, ...previous]);
       setActiveConversationId(thread.id);
       setStatus("idle");
+      setLastFailedQuestion(null);
     } catch (requestError) {
       setStatus("error");
-      setError(requestError instanceof Error ? requestError.message : "Could not start a conversation.");
+      setError(toUiError(requestError, "Could not start a conversation."));
     }
   }
 
-  async function submitQuestion() {
-    if (!draft.trim()) {
+  async function submitQuestion(questionOverride?: string, isRetry = false) {
+    if (submissionInProgress.current) return;
+    const question = (questionOverride ?? draft).trim();
+    if (!question) {
       return;
     }
 
-    const question = draft.trim();
+    submissionInProgress.current = true;
     setStatus("loading");
     setError(null);
 
@@ -72,23 +77,29 @@ export function AnalyticsDashboard() {
 
       const threadId = thread.id;
       const updatedThread = { ...thread, title: thread.messages.length ? thread.title : createTitleFromQuestion(question) };
-      setThreads((previous) => {
-        const exists = previous.some((item) => item.id === threadId);
-        return exists
-          ? previous.map((item) => item.id === threadId
-            ? { ...updatedThread, messages: [...item.messages, { type: "user", content: question }], result: null }
-            : item)
-          : [{ ...updatedThread, messages: [{ type: "user", content: question }] }, ...previous];
-      });
-      setDraft("");
+      if (!isRetry) {
+        setThreads((previous) => {
+          const exists = previous.some((item) => item.id === threadId);
+          return exists
+            ? previous.map((item) => item.id === threadId
+              ? { ...updatedThread, messages: [...item.messages, { type: "user", content: question }], result: null }
+              : item)
+            : [{ ...updatedThread, messages: [{ type: "user", content: question }] }, ...previous];
+        });
+        setDraft("");
+      }
       const result = await askQuestion({ question, conversation_id: threadId });
       setThreads((previous) => previous.map((item) => item.id === threadId
         ? { ...item, messages: [...item.messages, { type: "assistant", content: result.summary ?? result.explanation }], result }
         : item));
       setStatus("idle");
+      setLastFailedQuestion(null);
     } catch (requestError) {
       setStatus("error");
-      setError(requestError instanceof Error ? requestError.message : "Request failed.");
+      setError(toUiError(requestError, "Request failed."));
+      setLastFailedQuestion(question);
+    } finally {
+      submissionInProgress.current = false;
     }
   }
 
@@ -129,7 +140,19 @@ export function AnalyticsDashboard() {
           {error && (
             <div role="alert" className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
               <TriangleAlert className="mt-0.5 size-4 shrink-0" />
-              <span>{error}</span>
+              <div className="flex flex-1 flex-wrap items-center justify-between gap-3">
+                <span><strong className="mr-2 font-semibold">{error.code}</strong>{error.message}</span>
+                {error.retryable && lastFailedQuestion && (
+                  <button
+                    type="button"
+                    onClick={() => submitQuestion(lastFailedQuestion, true)}
+                    disabled={status === "loading"}
+                    className="rounded-md border border-red-300 px-3 py-1.5 text-xs font-semibold text-red-800 hover:bg-red-100 disabled:opacity-50"
+                  >
+                    Retry
+                  </button>
+                )}
+              </div>
             </div>
           )}
 
@@ -157,4 +180,15 @@ export function AnalyticsDashboard() {
       </main>
     </div>
   );
+}
+
+function toUiError(error: unknown, fallback: string) {
+  if (error instanceof ApiError) {
+    return { code: error.code, message: error.message, retryable: error.retryable };
+  }
+  return {
+    code: "REQUEST_FAILED",
+    message: error instanceof Error ? error.message : fallback,
+    retryable: true,
+  };
 }

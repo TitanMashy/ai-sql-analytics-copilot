@@ -16,6 +16,12 @@ from app.services.schema_retriever import SchemaRetriever
 def get_llm_provider() -> LLMProvider:
     settings = get_settings()
     if settings.llm_mode.casefold() == "mock":
+        if settings.is_production:
+            raise LLMProviderError(
+                "LLM_CONFIGURATION_ERROR",
+                "The mock provider is disabled in production.",
+                503,
+            )
         return MockLLMProvider()
     if settings.llm_mode.casefold() == "openai":
         return OpenAIProvider(settings)
@@ -23,7 +29,7 @@ def get_llm_provider() -> LLMProvider:
         return GeminiProvider(settings)
     raise LLMProviderError(
         "LLM_CONFIGURATION_ERROR",
-        "LLM_MODE must be 'mock' or 'gemini'.",
+        "LLM_MODE must be 'mock', 'gemini', or 'openai'.",
         503,
     )
 

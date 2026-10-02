@@ -32,8 +32,11 @@ class ResultSummaryService:
         if self.gemini_summary is not None:
             try:
                 return self.gemini_summary(question, sql, columns, rows)
-            except Exception:
-                logger.exception("Gemini result summary failed")
+            except Exception as error:
+                logger.warning(
+                    "Gemini result summary failed",
+                    extra={"error_type": type(error).__name__},
+                )
                 return None
         if analysis.kpi is not None:
             return f"{analysis.kpi.label}: {self._format_value(analysis.kpi)}."

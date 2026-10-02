@@ -2,13 +2,37 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from app.core.config import get_settings
 
 
 class GenerationRequest(BaseModel):
-    question: str = Field(description="A natural-language analytics question.")
-    conversation_id: str | None = Field(default=None, description="Optional conversation thread.")
-    conversation_context: str | None = Field(default=None, description="Optional prior context.")
+    question: str = Field(
+        min_length=1,
+        max_length=10000,
+        description="A natural-language analytics question.",
+    )
+    conversation_id: str | None = Field(
+        default=None, max_length=128, description="Optional conversation thread."
+    )
+    conversation_context: str | None = Field(
+        default=None, max_length=10000, description="Optional prior context."
+    )
+
+    @field_validator("question")
+    @classmethod
+    def enforce_question_limit(cls, value: str) -> str:
+        if len(value) > get_settings().max_question_length:
+            raise ValueError("Question exceeds the configured length limit.")
+        return value
+
+    @field_validator("conversation_context")
+    @classmethod
+    def enforce_context_limit(cls, value: str | None) -> str | None:
+        if value and len(value) > get_settings().max_conversation_context_chars:
+            raise ValueError("Conversation context exceeds the configured length limit.")
+        return value
 
 
 class GeneratedQueryResponse(BaseModel):

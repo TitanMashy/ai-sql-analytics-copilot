@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Check, ChevronDown, Copy, Database, Gauge, Rows3, Timer } from "lucide-react";
 
 import { ChartRenderer } from "@/components/charts/chart-renderer";
+import { ChartErrorBoundary } from "@/components/charts/chart-error-boundary";
 import { formatLabel, formatMetricValue } from "@/lib/utils";
 import type { AskResponse } from "@/types/api";
 
@@ -75,7 +76,9 @@ export function AnalyticsResults({ result }: AnalyticsResultsProps) {
 
       {result.visualization && result.rows.length > 0 && result.visualization.type !== "table" && result.visualization.type !== "kpi" && (
         <div className="rounded-lg border border-slate-200 bg-white p-4 sm:p-5">
-          <ChartRenderer data={result.rows} visualization={result.visualization} />
+          <ChartErrorBoundary key={`${result.question}-${result.row_count}`}>
+            <ChartRenderer data={result.rows} visualization={result.visualization} />
+          </ChartErrorBoundary>
         </div>
       )}
 
