@@ -16,6 +16,7 @@ export function buildMockAskResponse(question: string): AskResponse {
       rows: [{ active_vehicle_count: 128 }],
       row_count: 1,
       execution_time_ms: 189,
+      truncated: false,
       summary: "We currently have 128 active vehicles across the fleet.",
       kpi: {
         label: "Active Vehicles",
@@ -50,6 +51,7 @@ export function buildMockAskResponse(question: string): AskResponse {
       ],
       row_count: 4,
       execution_time_ms: 242,
+      truncated: false,
       summary: "Revenue was strongest among Northstar Logistics, Summit Transport, and BlueLine Freight.",
       kpi: {
         label: "Total Revenue",
@@ -83,6 +85,7 @@ export function buildMockAskResponse(question: string): AskResponse {
     ],
     row_count: 4,
     execution_time_ms: 214,
+    truncated: false,
     summary: "Revenue is trending upward over the most recent months.",
     kpi: {
       label: "Monthly Revenue",

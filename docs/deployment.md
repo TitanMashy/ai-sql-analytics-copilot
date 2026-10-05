@@ -23,8 +23,19 @@ Copy `.env.example` to `.env` for local Compose use. `.env` is ignored by Git. R
 | `MAX_CONVERSATION_CONTEXT_CHARS` | Caller-supplied context/turn characters | Defaults to 2,000. |
 | `MAX_REQUEST_BODY_BYTES` | Maximum buffered HTTP body | Defaults to 16 KiB, with a hard setting ceiling of 1 MiB. |
 | `RATE_LIMIT_ENABLED` | Enable process-local throttling | Keep enabled. |
-| `RATE_LIMIT_REQUESTS` | Requests per endpoint/client window | Defaults to 30. |
+| `RATE_LIMIT_REQUESTS` | Requests per route family and principal per window | Defaults to 30. |
+| `RATE_LIMIT_LLM_REQUESTS` | Stricter limit for `/generate` and `/ask` | Defaults to `min(RATE_LIMIT_REQUESTS, 20)`. |
 | `RATE_LIMIT_WINDOW_SECONDS` | Sliding window size | Defaults to 60 seconds. |
+| `REQUEST_DEADLINE_SECONDS` | Overall budget for one `/ask` | Defaults to 25. Keep it below the frontend's 30-second timeout. |
+| `AUTH_MODE` | `jwt`, `static` (development), or `disabled` (development) | Production requires `jwt`. |
+| `JWT_ALGORITHM` | `HS256`, `RS256`, or `ES256` | `RS256` by default. |
+| `JWT_SECRET` | HS256 signing secret | 32+ characters; supply through a secret store. |
+| `JWT_PUBLIC_KEY` | PEM public key for RS256/ES256 | Supply through a secret store. |
+| `JWT_ISSUER`, `JWT_AUDIENCE` | Required token claims | Both are required in `jwt` mode. |
+| `AUTH_STATIC_TOKEN`, `AUTH_STATIC_CUSTOMER_ID` | Development shared token and optional tenant | Rejected in production. |
+| `ENABLE_DIRECT_SQL_ENDPOINTS` | Mount `/analytics/query` and `/validate` | Off by default in production. |
+| `METRICS_TOKEN` | Bearer token for `/api/v1/metrics` | Unset in production disables the endpoint. |
+| `FORWARDED_ALLOW_IPS` | Trusted proxy addresses for `X-Forwarded-For` (uvicorn) | Compose sets `*` because only the frontend reaches the backend; otherwise name the proxy. |
 | `DATABASE_POOL_SIZE` | Per-process pool size for each engine | Defaults to 5. |
 | `DATABASE_MAX_OVERFLOW` | Temporary connections beyond pool size | Defaults to 10. |
 | `DATABASE_POOL_TIMEOUT_SECONDS` | Pool checkout timeout | Defaults to 5 seconds. |
@@ -52,11 +63,17 @@ docker compose run --rm backend python -m app.db.seed
 docker compose up --build -d
 ```
 
-The dashboard is at http://localhost:3000 and the API is at http://localhost:8000. The Next.js server proxies `/api/*` to the backend service. Stop the stack with `docker compose down`; this does not request volume deletion.
+The dashboard is at http://localhost:3000. The backend publishes no host port: the Next.js server proxies only the routes the UI needs (`ask`, conversations, schema tables, health) to the backend service, so `/query`, `/validate`, `/generate`, and `/metrics` are unreachable from the browser. To call the backend directly while developing, add the override file, which publishes `127.0.0.1:8000` and enables the direct-SQL endpoints:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+```
+
+Stop the stack with `docker compose down`; this does not request volume deletion. The default `AUTH_MODE=disabled` is for local use only. To exercise authentication locally, set `AUTH_MODE=jwt`, `JWT_ALGORITHM=HS256`, `JWT_SECRET`, `JWT_ISSUER`, and `JWT_AUDIENCE`, then paste the output of `python backend/scripts/issue_token.py --customer-id 7` (or `--admin`) into the dashboard's sign-in prompt.
 
 For Gemini, set `LLM_MODE=gemini` and `GEMINI_API_KEY` in the runtime environment before starting the backend. CI and credential-free demos use the deterministic mock provider.
 
-The backend container runs as a non-root user, installs runtime dependencies only, has a read-only root filesystem with a temporary `/tmp`, drops Linux capabilities, and has a readiness health check. The frontend uses the standalone Next.js output and a non-root runtime. PostgreSQL initialization creates the read-only role and grants SELECT; its distinct password is taken from `ANALYTICS_DATABASE_PASSWORD` for new clusters.
+The backend container runs as a non-root user, installs runtime dependencies only, has a read-only root filesystem with a temporary `/tmp`, drops Linux capabilities, and has a readiness health check. The frontend uses the standalone Next.js output and a non-root runtime. PostgreSQL initialization creates the read-only role with a distinct password (`ANALYTICS_DATABASE_PASSWORD`) for new clusters and grants it no table privileges; the `b7c2d41f8a10` migration creates the `analytics` views and grants the role `SELECT` on those only.
 
 ## Database Changes
 
@@ -67,7 +84,9 @@ docker compose run --rm backend alembic upgrade head
 docker compose run --rm backend python -m app.db.seed
 ```
 
-Seeding is deterministic and idempotent. The application role owns migrations; analytics requests use only `ANALYTICS_DATABASE_URL`. Keep PostgreSQL network access private. Compose publishes the backend port for local use; remove that host mapping or restrict it behind a trusted TLS-terminating gateway for deployment.
+Seeding is deterministic and idempotent. The application role owns migrations; analytics requests use only `ANALYTICS_DATABASE_URL`. Keep PostgreSQL network access private. Run migrations before starting a new backend version: until the `analytics` views exist the read-only role can read nothing, so analytics queries fail closed.
+
+Upgrading an existing cluster: run `alembic upgrade head` as the application owner. The migration creates the views, then (if the role exists) grants the views, revokes all privileges and default privileges on `public`, and sets the role's `search_path` to `analytics`. Run `make verify-permissions` afterwards. `alembic downgrade` restores the previous grants.
 
 ## Health, Metrics, and Logs
 
@@ -75,7 +94,7 @@ Seeding is deterministic and idempotent. The application role owns migrations; a
 - `GET /health/ready` checks the application database, analytics database, and required provider configuration. It returns 503 when a required dependency is unavailable.
 - `GET /api/v1/health` remains as a compatibility check for the application database.
 - `GET /api/v1/health/ready` is the versioned readiness alias.
-- `GET /api/v1/metrics` returns process-local counters and average latencies as JSON.
+- `GET /api/v1/metrics` returns process-local counters and average latencies as JSON. It requires `Authorization: Bearer $METRICS_TOKEN` when the token is set and is disabled in production when it is not. It is never proxied by the frontend; scrape it from inside the network.
 
 Request logs include request/conversation IDs, endpoint, total duration, LLM/validation/SQL durations, result row count where applicable, repair count, and status. Questions, SQL text, API keys, and connection URLs are not logged by application instrumentation. Keep access to logs and the metrics endpoint controlled at the network gateway.
 
@@ -87,4 +106,4 @@ Use HTTPS at a trusted reverse proxy and restrict public access to the API, metr
 
 ## Limitations
 
-Rate limiting, metrics, and conversations are process-local. Multi-instance deployments need a shared rate limiter, metrics aggregation, and durable conversation storage. The application has no user authentication, tenant authorization, or per-tenant query policy; do not expose customer data as a public multi-tenant service without those controls. The metrics endpoint is not authenticated and should be restricted by the deployment network. Result caching is intentionally absent because authorization scope and invalidation policy are not defined. Production connection-pool sizing should follow real load tests and the PostgreSQL connection budget.
+Rate limiting, metrics, and conversations are process-local. Multi-instance deployments need a shared rate limiter, metrics aggregation, and durable conversation storage. The application validates signed tokens and scopes every query to the token's customer, but it does not issue tokens: supply an identity provider (or your own issuer) that sets `sub`, `iss`, `aud`, `exp`, `roles`, and `customer_id`. Result caching is intentionally absent because invalidation policy is not defined. `INTERNAL_API_URL` is applied when `next build` evaluates the proxy rewrites, so it is a build-time value for the frontend image. Production connection-pool sizing should follow real load tests and the PostgreSQL connection budget.

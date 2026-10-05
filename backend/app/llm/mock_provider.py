@@ -5,6 +5,10 @@ from app.services.schema_retriever import SchemaContext
 class MockLLMProvider:
     name = "mock"
 
+    def __init__(self) -> None:
+        # Hints received by repair_sql, kept so tests can assert what the repair step was told.
+        self.repair_hints: list[str] = []
+
     def generate_sql(
         self,
         question: str,
@@ -85,6 +89,8 @@ class MockLLMProvider:
         original_sql: str,
         error_message: str,
         schema_context: SchemaContext,
+        conversation_context: str | None = None,
     ) -> LLMGeneration:
-        del original_sql, error_message
-        return self.generate_sql(question, schema_context)
+        del original_sql
+        self.repair_hints.append(error_message)
+        return self.generate_sql(question, schema_context, conversation_context)

@@ -1,32 +1,24 @@
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
 
 from sqlglot import exp, parse
 from sqlglot.errors import ParseError
 
+from app.db.analytics_surface import ANALYTICS_SCHEMA, PII_COLUMNS
 from app.db.schema_metadata import get_schema_metadata
 
 logger = logging.getLogger(__name__)
 
-ALLOWED_TABLES = frozenset(
-    {
-        "customers",
-        "users",
-        "vehicles",
-        "drivers",
-        "trips",
-        "vehicle_locations",
-        "fuel_records",
-        "maintenance_records",
-        "invoices",
-        "payments",
-        "subscriptions",
-    }
-)
+# Derived from the schema metadata so the allowlist cannot drift from the analytics surface.
+ALLOWED_TABLES = frozenset(table.name for table in get_schema_metadata())
 SYSTEM_SCHEMAS = frozenset({"pg_catalog", "information_schema", "pg_toast"})
+
+# Functions that are never acceptable, even if a future allowlist edit were to name them.
 DANGEROUS_FUNCTIONS = frozenset(
     {
+        "current_setting",
         "dblink",
         "dblink_connect",
         "lo_export",
@@ -38,7 +30,43 @@ DANGEROUS_FUNCTIONS = frozenset(
         "pg_sleep",
         "query_to_xml",
         "set_config",
+        "version",
         "xpath",
+    }
+)
+DANGEROUS_FUNCTION_PREFIXES = ("pg_", "lo_", "dblink", "inet_", "txid_")
+
+
+def _normalize_function_name(name: str) -> str:
+    return re.sub(r"[^A-Z0-9]", "", name.upper())
+
+
+# Only these functions may appear in analytics SQL. Names are compared after removing
+# punctuation and case, so ``DATE_TRUNC``, ``DateTrunc`` and ``TimestampTrunc`` all match
+# regardless of how SQLGlot names the node. Adding a function is a deliberate edit here.
+ALLOWED_FUNCTIONS = frozenset(
+    {
+        # aggregates
+        "COUNT", "SUM", "AVG", "MIN", "MAX", "STDDEV", "STDDEVPOP", "STDDEVSAMP",
+        "VARIANCE", "VARPOP", "VARSAMP", "MEDIAN", "PERCENTILECONT", "PERCENTILEDISC",
+        "STRINGAGG", "GROUPCONCAT",
+        # date and time
+        "DATETRUNC", "TIMESTAMPTRUNC", "DATEPART", "EXTRACT", "DATE", "DATEADD", "DATESUB",
+        "DATEDIFF", "CURRENTDATE", "CURRENTTIMESTAMP", "CURRENTTIME", "NOW", "AGE",
+        "TOCHAR", "TIMETOSTR",
+        # math
+        "ROUND", "CEIL", "CEILING", "FLOOR", "ABS", "POWER", "POW", "SQRT", "LN", "LOG",
+        "EXP", "MOD", "SIGN", "TRUNC", "GREATEST", "LEAST",
+        # conditional and casting
+        "CASE", "COALESCE", "NULLIF", "CAST", "TRYCAST", "IF",
+        # strings
+        "LOWER", "UPPER", "LENGTH", "CONCAT", "CONCATWS", "TRIM", "LTRIM", "RTRIM",
+        "SUBSTRING", "SUBSTR", "REPLACE", "LEFT", "RIGHT", "INITCAP", "SPLITPART",
+        # window functions
+        "ROWNUMBER", "RANK", "DENSERANK", "PERCENTRANK", "CUMEDIST", "NTILE", "LAG", "LEAD",
+        "FIRSTVALUE", "LASTVALUE", "NTHVALUE",
+        # predicates that SQLGlot models as functions
+        "EXISTS", "ANY", "ALL",
     }
 )
 FORBIDDEN_NODE_KEYS = frozenset(
@@ -90,6 +118,7 @@ class ValidationResult:
     complexity: QueryComplexity
     error_code: str = "QUERY_VALIDATION_ERROR"
     repairable: bool = False
+    limit_enforced: bool = False
 
 
 class SQLValidator:
@@ -182,12 +211,25 @@ class SQLValidator:
         if self._system_table_references(expression):
             errors.append("System and catalog tables are not available to analytics queries.")
             error_code = "QUERY_SECURITY_ERROR"
-            repairable = False
 
-        if self._dangerous_functions(expression):
+        if self._has_schema_qualifier(expression):
+            errors.append(
+                "Schema-qualified table references are not permitted; use plain table names."
+            )
+            if error_code != "QUERY_SECURITY_ERROR":
+                repairable = True
+
+        restricted_functions, unsupported_functions = self._function_violations(expression)
+        if restricted_functions:
             errors.append("The query uses a restricted PostgreSQL function.")
             error_code = "QUERY_SECURITY_ERROR"
-            repairable = False
+        if unsupported_functions:
+            errors.append(
+                f"Function {unsupported_functions[0]} is not available in analytics queries; "
+                "use standard aggregate, date, math, or string functions."
+            )
+            if error_code != "QUERY_SECURITY_ERROR":
+                repairable = True
 
         if joins > self.max_query_joins:
             errors.append(f"Query exceeds the maximum of {self.max_query_joins} joins.")
@@ -202,20 +244,28 @@ class SQLValidator:
             if error_code != "QUERY_SECURITY_ERROR":
                 error_code = "QUERY_COMPLEXITY_ERROR"
 
-        limit_value = self._limit_value(expression)
-        if limit_value is not None and limit_value > self.max_result_rows:
-            errors.append(f"LIMIT cannot exceed {self.max_result_rows} rows.")
-            error_code = "QUERY_SECURITY_ERROR"
         if self._selects_star(expression):
             warnings.append("SELECT * is allowed but selecting only needed columns is recommended.")
         warnings.append("Risk is an internal heuristic, not a security guarantee.")
 
-        column_errors = self._column_errors(expression, cte_names)
+        column_errors, personal_data_errors = self._column_errors(expression, cte_names)
+        if personal_data_errors:
+            errors.extend(personal_data_errors)
+            error_code = "QUERY_SECURITY_ERROR"
         if column_errors:
             errors.extend(column_errors)
             if error_code != "QUERY_SECURITY_ERROR":
                 error_code = "QUERY_VALIDATION_ERROR"
                 repairable = True
+
+        if error_code == "QUERY_SECURITY_ERROR":
+            repairable = False
+
+        limit_enforced = False
+        if not errors:
+            limit_enforced, limit_warning = self._enforce_limit(expression)
+            if limit_warning:
+                warnings.append(limit_warning)
 
         normalized_sql = expression.sql(dialect="postgres")
         return ValidationResult(
@@ -227,6 +277,7 @@ class SQLValidator:
             complexity,
             error_code=error_code,
             repairable=repairable,
+            limit_enforced=limit_enforced,
         )
 
     def _table_references(self, expression: exp.Expression) -> list[str]:
@@ -245,16 +296,75 @@ class SQLValidator:
                 result.append(table.name)
         return result
 
-    def _dangerous_functions(self, expression: exp.Expression) -> list[str]:
-        result = []
-        for node in expression.walk():
-            name = getattr(node, "name", "")
-            sql_name = node.sql_name().casefold() if hasattr(node, "sql_name") else ""
-            if name.casefold() in DANGEROUS_FUNCTIONS or sql_name in DANGEROUS_FUNCTIONS:
-                result.append(name or sql_name)
-        return result
+    @staticmethod
+    def _has_schema_qualifier(expression: exp.Expression) -> bool:
+        """True for any qualifier other than the analytics schema (system schemas excluded).
 
-    def _column_errors(self, expression: exp.Expression, cte_names: set[str]) -> list[str]:
+        System schemas are reported separately as a security error.
+        """
+        for table in expression.find_all(exp.Table):
+            database = (table.db or "").casefold()
+            catalog = (table.catalog or "").casefold()
+            if catalog and catalog not in SYSTEM_SCHEMAS:
+                return True
+            if database and database != ANALYTICS_SCHEMA and database not in SYSTEM_SCHEMAS:
+                return True
+        return False
+
+    @staticmethod
+    def _function_violations(expression: exp.Expression) -> tuple[list[str], list[str]]:
+        """Split function calls into restricted (security) and merely unsupported ones."""
+        restricted: list[str] = []
+        unsupported: list[str] = []
+        for node in expression.walk():
+            if not isinstance(node, exp.Func):
+                continue
+            if isinstance(node, exp.Anonymous):
+                display = str(node.name or "")
+                names = {display}
+            else:
+                display = type(node).__name__
+                names = {display, node.key}
+                try:
+                    names.add(node.sql_name())
+                except (AttributeError, NotImplementedError):
+                    pass
+            lowered = {name.casefold() for name in names if name}
+            if lowered & DANGEROUS_FUNCTIONS or any(
+                name.startswith(DANGEROUS_FUNCTION_PREFIXES) for name in lowered
+            ):
+                restricted.append(display)
+            elif not any(_normalize_function_name(name) in ALLOWED_FUNCTIONS for name in names):
+                unsupported.append(display)
+        return restricted, unsupported
+
+    @staticmethod
+    def _derived_tables(expression: exp.Expression) -> tuple[set[str], set[str], bool]:
+        """Aliases and output columns of ``FROM (SELECT ...) alias`` derived tables."""
+        aliases: set[str] = set()
+        columns: set[str] = set()
+        has_star = False
+        for subquery in expression.find_all(exp.Subquery):
+            alias = subquery.alias
+            if not alias:
+                continue
+            aliases.add(alias.casefold())
+            inner = subquery.this
+            select = inner.find(exp.Select) if isinstance(inner, exp.Expression) else None
+            if select is None:
+                has_star = True
+                continue
+            for projection in select.expressions:
+                name = projection.alias_or_name
+                if not name or name == "*":
+                    has_star = True
+                else:
+                    columns.add(name.casefold())
+        return aliases, columns, has_star
+
+    def _column_errors(
+        self, expression: exp.Expression, cte_names: set[str]
+    ) -> tuple[list[str], list[str]]:
         aliases: dict[str, str] = {}
         referenced_tables = []
         cte_columns: dict[str, set[str]] = {}
@@ -271,24 +381,41 @@ class SQLValidator:
             if table_name in self.table_columns:
                 aliases[(table.alias_or_name or table_name).casefold()] = table_name
                 referenced_tables.append(table_name)
-        known_aliases = set(aliases) | cte_names
+        derived_aliases, derived_columns, derived_has_star = self._derived_tables(expression)
+        known_aliases = set(aliases) | cte_names | derived_aliases
         select_aliases = {
             alias.alias_or_name.casefold()
             for alias in expression.find_all(exp.Alias)
             if alias.alias_or_name
         }
         errors = []
+        personal_data_errors = []
         for column in expression.find_all(exp.Column):
             column_name = column.name.casefold()
-            if column_name == "*" or column_name in select_aliases:
+            if (
+                column_name == "*"
+                or column_name in select_aliases
+                or column_name in derived_columns
+            ):
                 continue
             qualifier = (column.table or "").casefold()
             if qualifier and qualifier not in known_aliases:
                 errors.append(f"Unknown table alias: {qualifier}.")
                 continue
-            if qualifier in cte_names:
+            if qualifier in cte_names or qualifier in derived_aliases:
+                continue
+            if not qualifier and derived_has_star:
                 continue
             candidates = [aliases[qualifier]] if qualifier else referenced_tables
+            if any(
+                column_name in PII_COLUMNS.get(name, frozenset())
+                and column_name not in self.table_columns[name]
+                for name in candidates
+            ):
+                personal_data_errors.append(
+                    f"Column {column_name} contains personal data and is not available."
+                )
+                continue
             known_cte_column = any(column_name in columns for columns in cte_columns.values())
             if (
                 candidates
@@ -296,17 +423,29 @@ class SQLValidator:
                 and not any(column_name in self.table_columns[name] for name in candidates)
             ):
                 errors.append(f"Unknown column reference: {column_name}.")
-        return sorted(set(errors))
+        return sorted(set(errors)), sorted(set(personal_data_errors))
 
-    def _limit_value(self, expression: exp.Expression) -> int | None:
-        limit = expression.find(exp.Limit)
+    def _enforce_limit(self, expression: exp.Expression) -> tuple[bool, str | None]:
+        """Cap the outermost query at ``max_result_rows + 1`` rows.
+
+        One extra row lets the executor detect (and report) truncation while the database never
+        computes more than that for plain selects. Only the outer limit is considered, so a
+        ``LIMIT`` inside a subquery cannot mask a missing or oversized outer one.
+        """
+        limit = expression.args.get("limit")
+        current: int | None = None
         if (
-            limit is None
-            or not isinstance(limit.expression, exp.Literal)
-            or not limit.expression.is_int
+            isinstance(limit, exp.Limit)
+            and isinstance(limit.expression, exp.Literal)
+            and limit.expression.is_int
         ):
-            return None
-        return int(limit.expression.this)
+            current = int(limit.expression.this)
+        if current is not None and current <= self.max_result_rows:
+            return False, None
+        expression.set("limit", exp.Limit(expression=exp.Literal.number(self.max_result_rows + 1)))
+        if limit is None:
+            return True, f"No LIMIT clause; results are capped at {self.max_result_rows} rows."
+        return True, f"LIMIT was reduced to the maximum of {self.max_result_rows} rows."
 
     def _has_cartesian_join(self, expression: exp.Expression) -> bool:
         return any(

@@ -50,6 +50,7 @@ class AskResponse(GeneratedQueryResponse):
     rows: list[dict[str, Any]]
     row_count: int
     execution_time_ms: float
+    truncated: bool = False
     summary: str | None = None
     kpi: KPIResponse | None = None
     visualization: VisualizationResponse | None = None
@@ -72,3 +73,4 @@ class VisualizationResponse(BaseModel):
     title: str
     x_axis: VisualizationAxisResponse | None = None
     y_axis: VisualizationAxisResponse | None = None
+    series: list[VisualizationAxisResponse] = Field(default_factory=list)

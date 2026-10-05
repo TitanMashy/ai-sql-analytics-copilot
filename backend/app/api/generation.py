@@ -1,5 +1,7 @@
 from fastapi import APIRouter, Depends, Request
 
+from app.core.auth import Principal, get_principal
+from app.core.rate_limit import enforce_rate_limit
 from app.schemas.analytics import ErrorResponse
 from app.schemas.generation import (
     AskResponse,
@@ -12,11 +14,16 @@ from app.schemas.generation import (
 from app.services.generation import SQLGenerationService
 from app.services.llm_dependencies import get_sql_generation_service
 
-router = APIRouter(prefix="/analytics", tags=["analytics"])
+router = APIRouter(
+    prefix="/analytics",
+    tags=["analytics"],
+    dependencies=[Depends(get_principal)],  # noqa: B008
+)
 
 
 @router.post(
     "/generate",
+    dependencies=[Depends(enforce_rate_limit("llm"))],  # noqa: B008
     response_model=GeneratedQueryResponse,
     summary="Generate SQL from a natural-language question",
     description=(
@@ -35,17 +42,20 @@ router = APIRouter(prefix="/analytics", tags=["analytics"])
 def generate_sql(
     payload: GenerationRequest,
     service: SQLGenerationService = Depends(get_sql_generation_service),  # noqa: B008
+    principal: Principal = Depends(get_principal),  # noqa: B008
 ) -> GeneratedQueryResponse:
     result = service.generate(
         payload.question,
         payload.conversation_context,
         conversation_id=payload.conversation_id,
+        principal=principal,
     )
     return GeneratedQueryResponse(**result.__dict__)
 
 
 @router.post(
     "/ask",
+    dependencies=[Depends(enforce_rate_limit("llm"))],  # noqa: B008
     response_model=AskResponse,
     summary="Generate and execute analytics SQL",
     description=(
@@ -58,21 +68,26 @@ def generate_sql(
         408: {"model": ErrorResponse, "description": "Query timeout"},
         422: {
             "model": ErrorResponse,
-            "description": "Invalid question or unsupported mock question",
+            "description": (
+                "Invalid question, unsupported mock question, or no valid query could be produced"
+            ),
         },
         502: {"model": ErrorResponse, "description": "LLM provider or response error"},
+        504: {"model": ErrorResponse, "description": "Request deadline exceeded"},
     },
 )
 def ask_analytics(
     request: Request,
     payload: GenerationRequest,
     service: SQLGenerationService = Depends(get_sql_generation_service),  # noqa: B008
+    principal: Principal = Depends(get_principal),  # noqa: B008
 ) -> AskResponse:
     result = service.ask(
         payload.question,
         request_id=request.state.request_id,
         conversation_context=payload.conversation_context,
         conversation_id=payload.conversation_id,
+        principal=principal,
     )
     kpi = result.analysis.kpi
     visualization = result.analysis.visualization
@@ -82,6 +97,7 @@ def ask_analytics(
         rows=result.result.rows,
         row_count=result.result.row_count,
         execution_time_ms=result.result.execution_time_ms,
+        truncated=result.result.truncated,
         summary=result.summary,
         kpi=KPIResponse(**kpi.__dict__) if kpi else None,
         visualization=(
@@ -98,6 +114,9 @@ def ask_analytics(
                     if visualization.y_axis
                     else None
                 ),
+                series=[
+                    VisualizationAxisResponse(**axis.__dict__) for axis in visualization.series
+                ],
             )
             if visualization
             else None

@@ -1,11 +1,15 @@
 import logging
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, replace
 from functools import partial
 from time import perf_counter
 
 from app.analytics.service import AnalyticsQueryService, AnalyticsServiceError, QueryResult
 from app.conversation.service import ConversationMemory, get_conversation_memory
+from app.core.auth import Principal
+from app.core.deadline import Deadline
 from app.core.metrics import metrics
 from app.core.telemetry import get_request_telemetry
 from app.llm.prompt import SQLPromptBuilder
@@ -17,6 +21,18 @@ from app.services.schema_retriever import SchemaContext, SchemaRetriever
 from app.services.visualization import VisualizationSelector
 
 logger = logging.getLogger(__name__)
+
+GENERATION_FAILED_MESSAGE = (
+    "I couldn't produce a valid query for that question. Try rephrasing it, or ask about a "
+    "specific fleet, revenue, or maintenance metric."
+)
+DEADLINE_MESSAGE = (
+    "The request took too long to complete. Please try again or simplify the question."
+)
+
+# Provider SDK calls are blocking. Running them on worker threads lets the request enforce its
+# own deadline instead of waiting out a slow provider (and its internal retries).
+_provider_executor = ThreadPoolExecutor(max_workers=16, thread_name_prefix="llm-call")
 
 
 @dataclass(frozen=True)
@@ -50,6 +66,7 @@ class SQLGenerationService:
         visualization_selector: VisualizationSelector | None = None,
         summary_service: ResultSummaryService | None = None,
         conversation_memory: ConversationMemory | None = None,
+        request_deadline_seconds: float | None = None,
     ) -> None:
         self.provider = provider
         self.retriever = retriever or SchemaRetriever()
@@ -60,24 +77,20 @@ class SQLGenerationService:
         self.visualization_selector = visualization_selector or VisualizationSelector()
         self.summary_service = summary_service or ResultSummaryService()
         self.conversation_memory = conversation_memory or get_conversation_memory()
+        self.request_deadline_seconds = request_deadline_seconds
 
     def generate(
         self,
         question: str,
         conversation_context: str | None = None,
         conversation_id: str | None = None,
+        principal: Principal | None = None,
     ) -> GeneratedQuery:
-        if not question.strip():
-            raise LLMProviderError("INVALID_REQUEST", "Question cannot be empty.", 422)
-        telemetry = get_request_telemetry()
-        if telemetry:
-            telemetry.conversation_id = conversation_id
-        context = self.retriever.retrieve(question)
-        resolved_context = self._resolve_context(conversation_id, conversation_context)
-        generation = self._call_provider(
-            lambda: self.provider.generate_sql(question, context, resolved_context)
+        deadline = Deadline(self.request_deadline_seconds)
+        context, resolved_context = self._prepare(
+            question, conversation_context, conversation_id, principal
         )
-        return self._to_generated_query(question, context, generation)
+        return self._generate(question, context, resolved_context, deadline)
 
     def ask(
         self,
@@ -85,21 +98,26 @@ class SQLGenerationService:
         request_id: str | None = None,
         conversation_context: str | None = None,
         conversation_id: str | None = None,
+        principal: Principal | None = None,
     ) -> AskedQuery:
         if self.analytics_service is None:
             raise RuntimeError("AnalyticsQueryService is required for ask")
-        context = self.retriever.retrieve(question)
-        resolved_context = self._resolve_context(conversation_id, conversation_context)
+        deadline = Deadline(self.request_deadline_seconds)
+        context, resolved_context = self._prepare(
+            question, conversation_context, conversation_id, principal
+        )
+        generated = self._generate(question, context, resolved_context, deadline)
         telemetry = get_request_telemetry()
-        if telemetry:
-            telemetry.conversation_id = conversation_id
-        if conversation_id:
-            self.conversation_memory.add_turn(conversation_id, "user", question)
-        generated = self.generate(question, resolved_context, conversation_id=conversation_id)
         repair_attempts = 0
         while True:
             try:
-                result = self.analytics_service.execute(generated.sql, request_id=request_id)
+                self._check_deadline(deadline)
+                result = self.analytics_service.execute(
+                    generated.sql,
+                    request_id=request_id,
+                    principal=principal,
+                    timeout_seconds=deadline.remaining(),
+                )
                 analysis = self.result_analyzer.analyze(
                     question=question,
                     sql=generated.sql,
@@ -112,16 +130,18 @@ class SQLGenerationService:
                 visualization = self.visualization_selector.select(
                     question, result.columns, result.rows, analysis
                 )
-                analysis = replace(analysis, visualization=visualization)
+                warnings = list(analysis.warnings)
+                if result.truncated:
+                    warnings.append(
+                        f"Results were truncated to the first {result.row_count:,} rows; "
+                        "refine the question for complete results."
+                    )
+                analysis = replace(analysis, visualization=visualization, warnings=warnings)
                 summary = self.summary_service.summarize(
                     question, generated.sql, result.columns, result.rows, analysis
                 )
                 if conversation_id:
-                    self.conversation_memory.add_turn(
-                        conversation_id,
-                        "assistant",
-                        summary or generated.explanation or "The SQL executed successfully.",
-                    )
+                    self._remember(conversation_id, question, generated, summary, principal)
                 if repair_attempts:
                     metrics.increment("sql_repair_successes_total")
                     logger.info(
@@ -135,8 +155,10 @@ class SQLGenerationService:
                     summary=summary,
                 )
             except AnalyticsServiceError as error:
-                if not error.repairable or repair_attempts >= self.max_repair_retries:
+                if not error.repairable:
                     raise
+                if repair_attempts >= self.max_repair_retries:
+                    raise self._generation_failed(generated, error) from error
                 repair_attempts += 1
                 metrics.increment("sql_repair_attempts_total")
                 if telemetry:
@@ -145,22 +167,106 @@ class SQLGenerationService:
                     "repairing analytics SQL",
                     extra={"request_id": request_id, "repair_count": repair_attempts},
                 )
-                original_sql = generated.sql
-                repair_message = error.message
+                # The hint carries the identifier or SQLSTATE detail that makes a repair possible;
+                # the public message is deliberately generic and would turn repair into a re-roll.
                 repair_call = partial(
                     self.provider.repair_sql,
                     question,
-                    original_sql,
-                    repair_message,
+                    generated.sql,
+                    error.repair_hint or error.message,
                     context,
+                    conversation_context=resolved_context,
                 )
-                repaired = self._call_provider(repair_call)
+                repaired = self._call_provider(repair_call, deadline)
                 generated = self._to_generated_query(question, context, repaired)
 
-    def _call_provider(self, operation: Callable[[], LLMGeneration]) -> LLMGeneration:
+    # -- pipeline steps ---------------------------------------------------------------------
+
+    def _prepare(
+        self,
+        question: str,
+        conversation_context: str | None,
+        conversation_id: str | None,
+        principal: Principal | None,
+    ) -> tuple[SchemaContext, str | None]:
+        if not question.strip():
+            raise LLMProviderError("INVALID_REQUEST", "Question cannot be empty.", 422)
+        telemetry = get_request_telemetry()
+        if telemetry:
+            telemetry.conversation_id = conversation_id
+        owner = principal.user_id if principal else None
+        if conversation_id:
+            # Raises ConversationAccessError for a conversation owned by someone else.
+            self.conversation_memory.assert_access(conversation_id, owner)
+        resolved_context = self._resolve_context(conversation_id, conversation_context, owner)
+        return self.retriever.retrieve(question, resolved_context), resolved_context
+
+    def _generate(
+        self,
+        question: str,
+        context: SchemaContext,
+        resolved_context: str | None,
+        deadline: Deadline,
+    ) -> GeneratedQuery:
+        generation = self._call_provider(
+            lambda: self.provider.generate_sql(question, context, resolved_context), deadline
+        )
+        return self._to_generated_query(question, context, generation)
+
+    def _remember(
+        self,
+        conversation_id: str,
+        question: str,
+        generated: GeneratedQuery,
+        summary: str | None,
+        principal: Principal | None,
+    ) -> None:
+        """Record a completed exchange. Failed attempts are never stored."""
+        owner = principal.user_id if principal else None
+        self.conversation_memory.add_turn(conversation_id, "user", question, owner=owner)
+        self.conversation_memory.add_turn(
+            conversation_id,
+            "assistant",
+            summary or generated.explanation or "The SQL executed successfully.",
+            owner=owner,
+            sql=generated.sql,
+            tables=generated.tables_used,
+        )
+
+    @staticmethod
+    def _check_deadline(deadline: Deadline) -> None:
+        if deadline.expired():
+            raise SQLGenerationService._deadline_error()
+
+    @staticmethod
+    def _deadline_error() -> AnalyticsServiceError:
+        return AnalyticsServiceError("REQUEST_DEADLINE_EXCEEDED", DEADLINE_MESSAGE, 504)
+
+    @staticmethod
+    def _generation_failed(
+        generated: GeneratedQuery, error: AnalyticsServiceError
+    ) -> AnalyticsServiceError:
+        return AnalyticsServiceError(
+            "QUERY_GENERATION_FAILED",
+            GENERATION_FAILED_MESSAGE,
+            422,
+            debug={"sql": generated.sql, "last_error": error.repair_hint or error.message},
+        )
+
+    def _call_provider(
+        self, operation: Callable[[], LLMGeneration], deadline: Deadline
+    ) -> LLMGeneration:
         started_at = perf_counter()
         try:
-            return operation()
+            self._check_deadline(deadline)
+            future = _provider_executor.submit(operation)
+            try:
+                return future.result(timeout=deadline.remaining())
+            except FutureTimeoutError:
+                if future.done():
+                    raise  # the provider itself raised TimeoutError
+                future.cancel()
+                raise self._deadline_error() from None
         except LLMProviderError:
             if self.provider.name == "gemini":
                 metrics.increment("gemini_failures_total")
@@ -176,12 +282,13 @@ class SQLGenerationService:
         self,
         conversation_id: str | None,
         conversation_context: str | None,
+        owner: str | None,
     ) -> str | None:
         if conversation_context:
             return conversation_context
         if conversation_id is None:
             return None
-        return self.conversation_memory.build_context(conversation_id)
+        return self.conversation_memory.build_context(conversation_id, owner)
 
     def _to_generated_query(
         self,

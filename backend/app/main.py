@@ -1,10 +1,12 @@
+import hmac
 import logging
 from time import perf_counter
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.analytics.service import AnalyticsServiceError
 from app.api.analytics import router as analytics_router
@@ -13,14 +15,15 @@ from app.api.generation import router as generation_router
 from app.api.health import readiness_check
 from app.api.health import router as health_router
 from app.api.schema import router as schema_router
+from app.conversation.service import ConversationAccessError
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.core.metrics import metrics
 from app.core.middleware import (
     RequestSizeLimitMiddleware,
-    SlidingWindowRateLimiter,
     request_id_from_headers,
 )
+from app.core.rate_limit import RateLimitExceeded
 from app.core.telemetry import (
     RequestTelemetry,
     reset_request_telemetry,
@@ -31,6 +34,13 @@ from app.llm.provider import LLMProviderError
 settings = get_settings()
 configure_logging(settings.effective_log_level)
 
+logger = logging.getLogger(__name__)
+if settings.auth_mode != "jwt":
+    logger.warning(
+        "AUTH_MODE=%s does not enforce signed tokens; do not use in production",
+        settings.auth_mode,
+    )
+
 app = FastAPI(
     title="AI SQL Analytics Copilot API",
     version="0.1.0",
@@ -40,7 +50,10 @@ app = FastAPI(
     openapi_url=None if settings.is_production else "/openapi.json",
 )
 app.include_router(health_router, prefix="/api/v1")
-app.include_router(analytics_router, prefix="/api/v1")
+if settings.direct_sql_endpoints_enabled:
+    # /query and /validate run caller-written SQL. They are not mounted in production unless
+    # ENABLE_DIRECT_SQL_ENDPOINTS is set explicitly.
+    app.include_router(analytics_router, prefix="/api/v1")
 app.include_router(generation_router, prefix="/api/v1")
 app.include_router(conversations_router, prefix="/api/v1")
 app.include_router(schema_router, prefix="/api/v1")
@@ -48,7 +61,35 @@ app.add_api_route("/health", lambda: {"status": "ok"}, methods=["GET"], include_
 app.add_api_route(
     "/health/ready", readiness_check, methods=["GET"], include_in_schema=False
 )
-app.add_api_route("/api/v1/metrics", lambda: metrics.snapshot(), methods=["GET"])
+
+
+def metrics_snapshot(request: Request) -> JSONResponse:
+    """Process-local metrics. Bearer-protected when METRICS_TOKEN is set.
+
+    With no token configured the endpoint is open outside production and disabled (404) in
+    production, so an unconfigured deployment never exposes it.
+    """
+    request_id = getattr(request.state, "request_id", None)
+    configured = settings.metrics_token.get_secret_value() if settings.metrics_token else ""
+    if not configured:
+        if settings.is_production:
+            return _error_response(404, "NOT_FOUND", "Not found.", request_id)
+        return JSONResponse(metrics.snapshot())
+    scheme, _, supplied = request.headers.get("authorization", "").partition(" ")
+    if scheme.lower() != "bearer" or not hmac.compare_digest(
+        supplied.strip().encode(), configured.encode()
+    ):
+        return _error_response(
+            401,
+            "UNAUTHENTICATED",
+            "A valid metrics token is required.",
+            request_id,
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return JSONResponse(metrics.snapshot())
+
+
+app.add_api_route("/api/v1/metrics", metrics_snapshot, methods=["GET"], include_in_schema=False)
 app.add_middleware(
     RequestSizeLimitMiddleware,
     max_body_bytes=settings.max_request_body_bytes,
@@ -57,15 +98,9 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_allowed_origins,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Content-Type", "X-Request-ID"],
-    expose_headers=["X-Request-ID"],
+    allow_headers=["Content-Type", "Authorization", "X-Request-ID"],
+    expose_headers=["X-Request-ID", "Retry-After"],
 )
-
-rate_limiter = SlidingWindowRateLimiter(
-    settings.rate_limit_requests, settings.rate_limit_window_seconds
-)
-
-logger = logging.getLogger(__name__)
 
 
 @app.middleware("http")
@@ -78,29 +113,9 @@ async def request_context_middleware(request: Request, call_next):
     token = set_request_telemetry(telemetry)
     started_at = perf_counter()
     path = request.url.path
-    endpoint_key = _rate_limit_endpoint(path, request.method)
     try:
         try:
-            if endpoint_key and settings.rate_limit_enabled:
-                client_id = request.client.host if request.client else "unknown"
-                allowed, retry_after = rate_limiter.check(f"{client_id}:{endpoint_key}")
-                if not allowed:
-                    metrics.increment("rate_limit_responses_total")
-                    response = JSONResponse(
-                        status_code=429,
-                        content={
-                            "error": {
-                                "code": "RATE_LIMIT_EXCEEDED",
-                                "message": "Too many requests. Please retry later.",
-                                "request_id": request_id,
-                            }
-                        },
-                        headers={"Retry-After": str(retry_after)},
-                    )
-                else:
-                    response = await call_next(request)
-            else:
-                response = await call_next(request)
+            response = await call_next(request)
         except Exception as error:
             logger.error(
                 "unhandled request failure",
@@ -141,61 +156,93 @@ async def request_context_middleware(request: Request, call_next):
         reset_request_telemetry(token)
 
 
+def _error_response(
+    status_code: int,
+    code: str,
+    message: str,
+    request_id: str | None,
+    headers: dict[str, str] | None = None,
+    debug: dict | None = None,
+) -> JSONResponse:
+    error: dict = {"code": code, "message": message, "request_id": request_id}
+    if debug and not settings.is_production:
+        error["debug"] = debug
+    return JSONResponse(status_code=status_code, content={"error": error}, headers=headers)
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, error: RateLimitExceeded) -> JSONResponse:
+    return _error_response(
+        429,
+        "RATE_LIMIT_EXCEEDED",
+        "Too many requests. Please retry later.",
+        getattr(request.state, "request_id", None),
+        headers={"Retry-After": str(error.retry_after)},
+    )
+
+
+@app.exception_handler(ConversationAccessError)
+async def conversation_access_handler(
+    request: Request, error: ConversationAccessError
+) -> JSONResponse:
+    del error
+    return _error_response(
+        404,
+        "CONVERSATION_NOT_FOUND",
+        "Conversation not found.",
+        getattr(request.state, "request_id", None),
+    )
+
+
 @app.exception_handler(AnalyticsServiceError)
 async def analytics_service_error_handler(
     request: Request, error: AnalyticsServiceError
 ) -> JSONResponse:
-    return JSONResponse(
-        status_code=error.status_code,
-        content={
-            "error": {
-                "code": error.code,
-                "message": error.message,
-                "request_id": getattr(request.state, "request_id", None),
-            }
-        },
+    return _error_response(
+        error.status_code,
+        error.code,
+        error.message,
+        getattr(request.state, "request_id", None),
+        debug=error.debug,
     )
 
 
 @app.exception_handler(LLMProviderError)
 async def llm_provider_error_handler(request: Request, error: LLMProviderError) -> JSONResponse:
-    return JSONResponse(
-        status_code=error.status_code,
-        content={
-            "error": {
-                "code": error.code,
-                "message": error.message,
-                "request_id": getattr(request.state, "request_id", None),
-            }
-        },
+    return _error_response(
+        error.status_code,
+        error.code,
+        error.message,
+        getattr(request.state, "request_id", None),
     )
 
 
-@app.exception_handler(HTTPException)
-async def http_exception_handler(request: Request, error: HTTPException) -> JSONResponse:
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, error: StarletteHTTPException) -> JSONResponse:
     code_by_status = {
+        401: "UNAUTHENTICATED",
+        403: "FORBIDDEN",
+        405: "METHOD_NOT_ALLOWED",
         413: "REQUEST_TOO_LARGE",
         422: "INVALID_REQUEST",
         429: "RATE_LIMIT_EXCEEDED",
         503: "DEPENDENCY_UNAVAILABLE",
     }
     if error.status_code == 404:
-        code = (
-            "CONVERSATION_NOT_FOUND"
-            if request.url.path.startswith("/api/v1/analytics/conversations/")
-            else "TABLE_NOT_FOUND"
-        )
+        if request.url.path.startswith("/api/v1/analytics/conversations/"):
+            code = "CONVERSATION_NOT_FOUND"
+        elif request.url.path.startswith("/api/v1/schema/tables/"):
+            code = "TABLE_NOT_FOUND"
+        else:
+            code = "NOT_FOUND"
     else:
         code = code_by_status.get(error.status_code, "INTERNAL_ERROR")
-    return JSONResponse(
-        status_code=error.status_code,
-        content={
-            "error": {
-                "code": code,
-                "message": str(error.detail),
-                "request_id": getattr(request.state, "request_id", None),
-            }
-        },
+    return _error_response(
+        error.status_code,
+        code,
+        str(error.detail),
+        getattr(request.state, "request_id", None),
+        headers=dict(error.headers) if error.headers else None,
     )
 
 
@@ -204,15 +251,11 @@ async def request_validation_error_handler(
     request: Request, error: RequestValidationError
 ) -> JSONResponse:
     del error
-    return JSONResponse(
-        status_code=422,
-        content={
-            "error": {
-                "code": "INVALID_REQUEST",
-                "message": "Request validation failed.",
-                "request_id": getattr(request.state, "request_id", None),
-            }
-        },
+    return _error_response(
+        422,
+        "INVALID_REQUEST",
+        "Request validation failed.",
+        getattr(request.state, "request_id", None),
     )
 
 
@@ -245,20 +288,6 @@ def _internal_error_response(request_id: str | None) -> JSONResponse:
     )
     _add_security_headers(response)
     return response
-
-
-def _rate_limit_endpoint(path: str, method: str) -> str | None:
-    if method != "POST":
-        return None
-    if path == "/api/v1/analytics/generate":
-        return "generate"
-    if path == "/api/v1/analytics/ask":
-        return "ask"
-    if path == "/api/v1/analytics/conversations" or (
-        path.startswith("/api/v1/analytics/conversations/") and path.endswith("/turns")
-    ):
-        return "conversation"
-    return None
 
 
 def _is_analytics_request(path: str, method: str) -> bool:

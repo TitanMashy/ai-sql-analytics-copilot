@@ -40,7 +40,8 @@ class GeminiProvider:
             http_options=types.HttpOptions(
                 timeout=round(settings.llm_timeout_seconds * 1000),
                 retry_options=types.HttpRetryOptions(
-                    attempts=3,
+                    # Two attempts keep worst-case latency inside the request deadline.
+                    attempts=2,
                     initial_delay=0.2,
                     max_delay=2.0,
                     exp_base=2.0,
@@ -58,7 +59,9 @@ class GeminiProvider:
         schema_context: SchemaContext,
         conversation_context: str | None = None,
     ) -> LLMGeneration:
-        prompt = self.prompt_builder.build(question, schema_context, conversation_context)
+        prompt = self.prompt_builder.build_user_prompt(
+            question, schema_context, conversation_context
+        )
         return self._complete(prompt)
 
     def repair_sql(
@@ -67,14 +70,12 @@ class GeminiProvider:
         original_sql: str,
         error_message: str,
         schema_context: SchemaContext,
+        conversation_context: str | None = None,
     ) -> LLMGeneration:
-        prompt = self.prompt_builder.build(question, schema_context)
-        repair_prompt = (
-            f"{prompt}\nRepair the SQL below using the database error. "
-            "Return the same JSON structure and only a read-only SELECT.\n"
-            f"Original SQL:\n{original_sql}\nDatabase error:\n{error_message}"
+        prompt = self.prompt_builder.build_repair_prompt(
+            question, schema_context, original_sql, error_message, conversation_context
         )
-        return self._complete(repair_prompt)
+        return self._complete(prompt)
 
     def _complete(self, prompt: str) -> LLMGeneration:
         try:
@@ -82,6 +83,8 @@ class GeminiProvider:
                 model=self.model,
                 contents=prompt,
                 config=types.GenerateContentConfig(
+                    system_instruction=self.prompt_builder.system_instruction(),
+                    temperature=0.0,
                     response_mime_type="application/json",
                     response_schema=StructuredLLMResponse,
                 ),

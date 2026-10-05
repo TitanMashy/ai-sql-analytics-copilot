@@ -5,6 +5,7 @@ class ColumnMetadataResponse(BaseModel):
     name: str
     data_type: str
     nullable: bool
+    allowed_values: list[str] = []
 
 
 class RelationshipMetadataResponse(BaseModel):

@@ -43,4 +43,5 @@ def get_sql_generation_service() -> SQLGenerationService:
         max_repair_retries=get_settings().max_repair_retries,
         summary_service=ResultSummaryService(enabled=get_settings().enable_result_summary),
         conversation_memory=get_conversation_memory(),
+        request_deadline_seconds=get_settings().request_deadline_seconds,
     )

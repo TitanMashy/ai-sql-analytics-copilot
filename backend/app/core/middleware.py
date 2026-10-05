@@ -115,14 +115,17 @@ class SlidingWindowRateLimiter:
         self._lock = Lock()
         self._events: dict[str, deque[float]] = defaultdict(deque)
 
-    def check(self, key: str, now: float | None = None) -> tuple[bool, int]:
+    def check(
+        self, key: str, now: float | None = None, limit: int | None = None
+    ) -> tuple[bool, int]:
         current = time.monotonic() if now is None else now
         cutoff = current - self.window_seconds
+        allowed_requests = self.requests if limit is None else limit
         with self._lock:
             events = self._events[key]
             while events and events[0] <= cutoff:
                 events.popleft()
-            if len(events) >= self.requests:
+            if len(events) >= allowed_requests:
                 retry_after = max(1, math.ceil(self.window_seconds - (current - events[0])))
                 return False, retry_after
             events.append(current)

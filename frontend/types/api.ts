@@ -16,6 +16,8 @@ export interface VisualizationResponse {
   title: string;
   x_axis?: VisualizationAxisResponse | null;
   y_axis?: VisualizationAxisResponse | null;
+  /** Every plotted measure when a chart has more than one; empty for a single measure. */
+  series?: VisualizationAxisResponse[];
 }
 
 export interface GeneratedQueryResponse {
@@ -33,6 +35,8 @@ export interface AskResponse extends GeneratedQueryResponse {
   rows: Record<string, unknown>[];
   row_count: number;
   execution_time_ms: number;
+  /** True when the result was cut at the server's row cap. */
+  truncated: boolean;
   summary?: string | null;
   kpi?: KPIResponse | null;
   visualization?: VisualizationResponse | null;
@@ -55,4 +59,10 @@ export interface QuestionRequest {
   question: string;
   conversation_id?: string;
   conversation_context?: string;
+}
+
+/** Extra detail the backend attaches to errors outside production. */
+export interface ErrorDebug {
+  sql?: string;
+  last_error?: string;
 }

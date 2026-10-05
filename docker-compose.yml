@@ -22,7 +22,7 @@ services:
       ANALYTICS_DATABASE_URL: ${ANALYTICS_DATABASE_URL:-postgresql+psycopg://analytics_readonly:${ANALYTICS_DATABASE_PASSWORD:?Set ANALYTICS_DATABASE_PASSWORD in .env}@postgres:5432/app}
       LLM_MODE: ${LLM_MODE:-mock}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-flash-latest}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
       APP_ENV: ${APP_ENV:-development}
       DEBUG: ${DEBUG:-false}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-[]}
@@ -45,8 +45,25 @@ services:
       RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
       RATE_LIMIT_REQUESTS: ${RATE_LIMIT_REQUESTS:-30}
       RATE_LIMIT_WINDOW_SECONDS: ${RATE_LIMIT_WINDOW_SECONDS:-60}
-    ports:
-      - "8000:8000"
+      RATE_LIMIT_LLM_REQUESTS: ${RATE_LIMIT_LLM_REQUESTS:-20}
+      REQUEST_DEADLINE_SECONDS: ${REQUEST_DEADLINE_SECONDS:-25}
+      ENABLE_DIRECT_SQL_ENDPOINTS: ${ENABLE_DIRECT_SQL_ENDPOINTS:-false}
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
+      AUTH_MODE: ${AUTH_MODE:-disabled}
+      AUTH_STATIC_TOKEN: ${AUTH_STATIC_TOKEN:-}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-RS256}
+      JWT_SECRET: ${JWT_SECRET:-}
+      JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY:-}
+      JWT_ISSUER: ${JWT_ISSUER:-}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-}
+      # The backend is only reachable from the frontend container on the Compose network, so the
+      # proxy's X-Forwarded-For can be trusted. Narrow this to the frontend's address if the
+      # backend is ever exposed more widely.
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-*}
+    # No published port: only the frontend (the same-origin proxy) reaches the backend.
+    # Use docker-compose.dev.yml to publish it for local debugging.
+    expose:
+      - "8000"
     init: true
     restart: unless-stopped
     read_only: true

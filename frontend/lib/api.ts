@@ -1,6 +1,14 @@
-import type { AskResponse, ConversationResponse, QuestionRequest } from "@/types/api";
+import { getAuthToken } from "@/lib/auth";
+import type {
+  AskResponse,
+  ConversationResponse,
+  ErrorDebug,
+  QuestionRequest,
+} from "@/types/api";
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? "";
+// The backend gives up on a question after REQUEST_DEADLINE_SECONDS (25 by default). Keep this
+// above that, so the server reports the timeout before the browser abandons the request.
 const requestTimeoutMs = 30_000;
 
 export class ApiError extends Error {
@@ -9,6 +17,8 @@ export class ApiError extends Error {
     readonly code: string,
     readonly requestId: string | null = null,
     readonly retryable = false,
+    readonly debug: ErrorDebug | null = null,
+    readonly retryAfterSeconds: number | null = null,
   ) {
     super(message);
     this.name = "ApiError";
@@ -20,11 +30,13 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
   let response: Response;
   try {
+    const token = getAuthToken();
     response = await fetch(`${apiBaseUrl}${path}`, {
       ...init,
       signal: init?.signal ?? controller.signal,
       headers: {
         "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...(init?.headers ?? {}),
       },
     });
@@ -56,10 +68,26 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
       typeof errorBody.code === "string" ? errorBody.code : `HTTP_${response.status}`,
       typeof errorBody.request_id === "string" ? errorBody.request_id : null,
       retryable,
+      parseDebug(errorBody.debug),
+      parseRetryAfter(response),
     );
   }
 
   return body as T;
+}
+
+function parseDebug(value: unknown): ErrorDebug | null {
+  if (!isRecord(value)) return null;
+  return {
+    sql: typeof value.sql === "string" ? value.sql : undefined,
+    last_error: typeof value.last_error === "string" ? value.last_error : undefined,
+  };
+}
+
+function parseRetryAfter(response: Response): number | null {
+  const header = response.headers?.get?.("Retry-After");
+  const seconds = header ? Number(header) : Number.NaN;
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds : null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -79,7 +107,8 @@ function isValidVisualization(value: unknown): boolean {
     ["table", "kpi", "bar", "line", "area", "pie"].includes(String(value.type)) &&
     typeof value.title === "string" &&
     isVisualizationAxis(value.x_axis) &&
-    isVisualizationAxis(value.y_axis);
+    isVisualizationAxis(value.y_axis) &&
+    (value.series === undefined || (Array.isArray(value.series) && value.series.every(isVisualizationAxis)));
 }
 
 function isValidKpi(value: unknown): value is NonNullable<AskResponse["kpi"]> {
@@ -108,6 +137,7 @@ function normalizeAskResponse(value: unknown): AskResponse {
 
   return {
     ...value,
+    truncated: value.truncated === true,
     kpi: isValidKpi(value.kpi) ? value.kpi : null,
     visualization: isValidVisualization(value.visualization)
       ? value.visualization as AskResponse["visualization"]

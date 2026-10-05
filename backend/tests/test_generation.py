@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -7,6 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.analytics.service import AnalyticsQueryService, AnalyticsServiceError
 from app.analytics.validator import SQLValidator
+from app.db.schema_metadata import get_schema_metadata
 from app.llm.mock_provider import MockLLMProvider
 from app.llm.parser import parse_llm_response
 from app.llm.prompt import SQLPromptBuilder
@@ -38,12 +40,42 @@ def test_mock_provider_generates_five_realistic_questions() -> None:
         assert generation.tables_used
 
 
-def test_schema_retriever_selects_revenue_tables() -> None:
-    context = SchemaRetriever().retrieve("Which customers generated the most revenue?")
+def test_schema_retriever_narrowed_mode_selects_revenue_tables() -> None:
+    context = SchemaRetriever(full_schema=False).retrieve(
+        "Which customers generated the most revenue?"
+    )
 
     assert {"customers", "invoices", "payments"}.issubset(context.table_names)
     assert "vehicles" not in context.table_names
     assert any(definition.name == "revenue" for definition in context.business_definitions)
+
+
+def test_schema_retriever_includes_every_table_by_default_with_relevant_first() -> None:
+    context = SchemaRetriever().retrieve("Which customers generated the most revenue?")
+
+    assert len(context.table_names) == len(get_schema_metadata())
+    assert context.table_names[0] in {"invoices", "customers"}
+    assert "vehicles" in context.table_names
+
+
+def test_follow_up_without_keywords_still_sees_the_whole_schema() -> None:
+    context = SchemaRetriever().retrieve("and break that down by month?")
+
+    assert len(context.table_names) == len(get_schema_metadata())
+
+
+def test_narrowed_follow_up_uses_the_conversation_instead_of_an_arbitrary_fallback() -> None:
+    retriever = SchemaRetriever(full_schema=False)
+
+    with_context = retriever.retrieve(
+        "and break that down by month?",
+        "user: Show revenue by customer\nassistant: Acme led revenue.\n  Tables: invoices",
+    )
+    without_context = retriever.retrieve("and break that down by month?")
+
+    assert "invoices" in with_context.table_names
+    assert any(definition.name == "revenue" for definition in with_context.business_definitions)
+    assert len(without_context.table_names) == len(get_schema_metadata())
 
 
 def test_prompt_contains_schema_and_business_definitions() -> None:
@@ -56,6 +88,61 @@ def test_prompt_contains_schema_and_business_definitions() -> None:
     assert "customers" in prompt
     assert "Do not invent identifiers" in prompt
     assert "OPENAI_API_KEY" not in prompt
+
+
+FIXED_NOW = datetime(2026, 3, 14, 9, 30, tzinfo=UTC)
+
+
+def test_prompt_includes_current_date_enum_values_and_untrusted_data_markers() -> None:
+    builder = SQLPromptBuilder(clock=lambda: FIXED_NOW)
+    context = SchemaRetriever().retrieve("How many active vehicles are there?")
+
+    prompt = builder.build_user_prompt("How many active vehicles are there?", context)
+
+    assert "Current date and time: 2026-03-14 09:30 UTC" in prompt
+    assert "status (VARCHAR(20)) one of 'active', 'inactive', 'maintenance', 'retired'" in prompt
+    assert 'User question (JSON-encoded untrusted data): "How many active vehicles' in prompt
+    assert "Relevant schema:" in prompt
+    assert "Business definitions:" in prompt
+
+
+def test_prompt_never_shows_personal_data_columns() -> None:
+    context = SchemaRetriever().retrieve("List users and drivers")
+
+    prompt = SQLPromptBuilder().build_user_prompt("List users and drivers", context)
+
+    for hidden in ("email", "license_number", "phone"):
+        assert hidden not in prompt
+
+
+def test_rules_live_in_the_system_instruction_not_the_user_prompt() -> None:
+    builder = SQLPromptBuilder(clock=lambda: FIXED_NOW)
+    context = SchemaRetriever().retrieve("Show revenue")
+
+    system = builder.system_instruction()
+    user = builder.build_user_prompt("Show revenue", context)
+
+    assert "Do not invent identifiers" in system
+    assert "only standard aggregate" in system
+    assert "Do not invent identifiers" not in user
+
+
+def test_repair_prompt_is_built_once_and_carries_hint_sql_and_context() -> None:
+    builder = SQLPromptBuilder(clock=lambda: FIXED_NOW)
+    context = SchemaRetriever().retrieve("Show revenue")
+
+    prompt = builder.build_repair_prompt(
+        "Show revenue",
+        context,
+        "SELECT missing FROM invoices",
+        "SQLSTATE 42703: column \"missing\" does not exist",
+        conversation_context="user: earlier",
+    )
+
+    assert "SELECT missing FROM invoices" in prompt
+    assert "42703" in prompt
+    assert "user: earlier" in prompt
+    assert "Repair the SQL" in prompt
 
 
 def test_parser_accepts_code_fence_and_ignores_extra_fields() -> None:

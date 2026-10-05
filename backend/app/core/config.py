@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     gemini_api_key: SecretStr | None = Field(
         default=None, validation_alias="GEMINI_API_KEY", repr=False
     )
-    gemini_model: str = Field(default="gemini-flash-latest", validation_alias="GEMINI_MODEL")
+    gemini_model: str = Field(default="gemini-2.5-flash", validation_alias="GEMINI_MODEL")
     llm_mode: Literal["mock", "gemini", "openai"] = Field(
         default="mock", validation_alias="LLM_MODE"
     )
@@ -69,12 +69,49 @@ class Settings(BaseSettings):
     rate_limit_window_seconds: int = Field(
         default=60, gt=0, validation_alias="RATE_LIMIT_WINDOW_SECONDS"
     )
+    rate_limit_llm_requests: int | None = Field(
+        default=None, validation_alias="RATE_LIMIT_LLM_REQUESTS"
+    )
+    request_deadline_seconds: float = Field(
+        default=25.0, gt=0, le=300, validation_alias="REQUEST_DEADLINE_SECONDS"
+    )
+    enable_direct_sql_endpoints: bool | None = Field(
+        default=None, validation_alias="ENABLE_DIRECT_SQL_ENDPOINTS"
+    )
+    metrics_token: SecretStr | None = Field(
+        default=None, validation_alias="METRICS_TOKEN", repr=False
+    )
+    auth_mode: Literal["jwt", "static", "disabled"] = Field(
+        default="disabled", validation_alias="AUTH_MODE"
+    )
+    auth_static_token: SecretStr | None = Field(
+        default=None, validation_alias="AUTH_STATIC_TOKEN", repr=False
+    )
+    auth_static_customer_id: int | None = Field(
+        default=None, validation_alias="AUTH_STATIC_CUSTOMER_ID"
+    )
+    jwt_algorithm: Literal["HS256", "RS256", "ES256"] = Field(
+        default="RS256", validation_alias="JWT_ALGORITHM"
+    )
+    jwt_secret: SecretStr | None = Field(default=None, validation_alias="JWT_SECRET", repr=False)
+    jwt_public_key: SecretStr | None = Field(
+        default=None, validation_alias="JWT_PUBLIC_KEY", repr=False
+    )
+    jwt_issuer: str | None = Field(default=None, validation_alias="JWT_ISSUER")
+    jwt_audience: str | None = Field(default=None, validation_alias="JWT_AUDIENCE")
 
     @field_validator("cors_allowed_origins", mode="before")
     @classmethod
     def parse_origins(cls, value: object) -> object:
         if isinstance(value, str):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
+        return value
+
+    @field_validator("rate_limit_llm_requests", "auth_static_customer_id")
+    @classmethod
+    def validate_positive_optional(cls, value: int | None) -> int | None:
+        if value is not None and value <= 0:
+            raise ValueError("Value must be greater than zero.")
         return value
 
     @field_validator("log_level")
@@ -102,6 +139,19 @@ class Settings(BaseSettings):
         return self.debug and not self.is_production
 
     @property
+    def direct_sql_endpoints_enabled(self) -> bool:
+        if self.enable_direct_sql_endpoints is None:
+            return not self.is_production
+        return self.enable_direct_sql_endpoints
+
+    @property
+    def effective_llm_rate_limit(self) -> int:
+        """LLM-backed calls are limited more strictly than other analytics routes."""
+        if self.rate_limit_llm_requests is not None:
+            return self.rate_limit_llm_requests
+        return min(self.rate_limit_requests, 20)
+
+    @property
     def effective_log_level(self) -> str:
         return "INFO" if self.is_production and self.log_level == "DEBUG" else self.log_level
 
@@ -114,7 +164,24 @@ class Settings(BaseSettings):
                 raise ValueError("Production requires PostgreSQL application and analytics URLs.")
             if self.llm_mode == "mock":
                 raise ValueError("The mock provider is disabled in production.")
+            if self.auth_mode != "jwt":
+                raise ValueError("Production requires AUTH_MODE=jwt.")
+        if self.auth_mode == "jwt":
+            self._validate_jwt_configuration()
+        if self.auth_mode == "static" and not (
+            self.auth_static_token and self.auth_static_token.get_secret_value().strip()
+        ):
+            raise ValueError("AUTH_STATIC_TOKEN is required when AUTH_MODE=static.")
         return self
+
+    def _validate_jwt_configuration(self) -> None:
+        if not self.jwt_issuer or not self.jwt_audience:
+            raise ValueError("JWT_ISSUER and JWT_AUDIENCE are required when AUTH_MODE=jwt.")
+        if self.jwt_algorithm == "HS256":
+            if not (self.jwt_secret and len(self.jwt_secret.get_secret_value()) >= 32):
+                raise ValueError("JWT_SECRET (at least 32 characters) is required for HS256.")
+        elif not (self.jwt_public_key and self.jwt_public_key.get_secret_value().strip()):
+            raise ValueError("JWT_PUBLIC_KEY is required for asymmetric JWT algorithms.")
 
 
 @lru_cache

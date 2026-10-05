@@ -24,12 +24,14 @@ class AnalyticsQueryResponse(BaseModel):
     rows: list[dict[str, Any]]
     row_count: int
     execution_time_ms: float
+    truncated: bool = False
 
 
 class ErrorBody(BaseModel):
     code: str
     message: str
     request_id: str | None = None
+    debug: dict[str, Any] | None = None
 
 
 class ErrorResponse(BaseModel):

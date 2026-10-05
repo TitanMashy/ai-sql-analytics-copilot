@@ -7,6 +7,7 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  Legend,
   Line,
   LineChart,
   Pie,
@@ -17,8 +18,9 @@ import {
   YAxis,
 } from "recharts";
 
+import { colorAt, formatAxisLabel, resolveSeries, sortByField } from "@/lib/chart-utils";
 import type { VisualizationResponse } from "@/types/api";
-import { formatMetricValue } from "@/lib/utils";
+import { formatLabel, formatMetricValue } from "@/lib/utils";
 
 function formatTooltipValue(value: unknown, format: string) {
   return formatMetricValue(typeof value === "number" || typeof value === "string" ? value : null, format);
@@ -36,7 +38,10 @@ function getNumericValue(row: Record<string, unknown>, key: string) {
 
 export function ChartRenderer({ data, visualization }: ChartRendererProps) {
   const xKey = visualization.x_axis?.field ?? "label";
-  const yKey = visualization.y_axis?.field ?? "value";
+  const series = resolveSeries(visualization);
+  const yKey = series[0].field;
+  const valueFormat = series[0].format ?? "text";
+  const showLegend = series.length > 1;
 
   if (!data.length) {
     return <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">No chart data available.</div>;
@@ -46,6 +51,12 @@ export function ChartRenderer({ data, visualization }: ChartRendererProps) {
     data,
     margin: { top: 12, right: 12, bottom: 12, left: 12 },
   };
+  const tooltip = (
+    <Tooltip
+      formatter={(value, name) => [formatTooltipValue(value, valueFormat), formatLabel(String(name))]}
+    />
+  );
+  const legend = showLegend ? <Legend formatter={(name) => formatLabel(String(name))} /> : null;
 
   switch (visualization.type) {
     case "bar":
@@ -56,8 +67,11 @@ export function ChartRenderer({ data, visualization }: ChartRendererProps) {
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
               <XAxis dataKey={xKey} tick={{ fontSize: 12 }} />
               <YAxis tick={{ fontSize: 12 }} />
-              <Tooltip formatter={(value) => formatTooltipValue(value, visualization.y_axis?.format ?? "text")} />
-              <Bar dataKey={yKey} radius={[8, 8, 0, 0]} fill="#2563eb" />
+              {tooltip}
+              {legend}
+              {series.map((axis, index) => (
+                <Bar key={axis.field} dataKey={axis.field} radius={[8, 8, 0, 0]} fill={colorAt(index)} />
+              ))}
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -66,12 +80,22 @@ export function ChartRenderer({ data, visualization }: ChartRendererProps) {
       return (
         <div className="h-80 w-full">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart {...commonProps}>
+            <LineChart {...commonProps} data={sortByField(data, xKey)}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis dataKey={xKey} tick={{ fontSize: 12 }} />
+              <XAxis dataKey={xKey} tick={{ fontSize: 12 }} tickFormatter={formatAxisLabel} />
               <YAxis tick={{ fontSize: 12 }} />
-              <Tooltip formatter={(value) => formatTooltipValue(value, visualization.y_axis?.format ?? "text")} />
-              <Line type="monotone" dataKey={yKey} stroke="#2563eb" strokeWidth={3} dot={{ r: 3 }} />
+              {tooltip}
+              {legend}
+              {series.map((axis, index) => (
+                <Line
+                  key={axis.field}
+                  type="monotone"
+                  dataKey={axis.field}
+                  stroke={colorAt(index)}
+                  strokeWidth={3}
+                  dot={{ r: 3 }}
+                />
+              ))}
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -80,18 +104,23 @@ export function ChartRenderer({ data, visualization }: ChartRendererProps) {
       return (
         <div className="h-80 w-full">
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart {...commonProps}>
-              <defs>
-                <linearGradient id="fillArea" x1="0" x2="0" y1="0" y2="1">
-                  <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.8} />
-                  <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.1} />
-                </linearGradient>
-              </defs>
+            <AreaChart {...commonProps} data={sortByField(data, xKey)}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis dataKey={xKey} tick={{ fontSize: 12 }} />
+              <XAxis dataKey={xKey} tick={{ fontSize: 12 }} tickFormatter={formatAxisLabel} />
               <YAxis tick={{ fontSize: 12 }} />
-              <Tooltip formatter={(value) => formatTooltipValue(value, visualization.y_axis?.format ?? "text")} />
-              <Area type="monotone" dataKey={yKey} stroke="#2563eb" fill="url(#fillArea)" strokeWidth={2} />
+              {tooltip}
+              {legend}
+              {series.map((axis, index) => (
+                <Area
+                  key={axis.field}
+                  type="monotone"
+                  dataKey={axis.field}
+                  stroke={colorAt(index)}
+                  fill={colorAt(index)}
+                  fillOpacity={0.2}
+                  strokeWidth={2}
+                />
+              ))}
             </AreaChart>
           </ResponsiveContainer>
         </div>
@@ -107,10 +136,11 @@ export function ChartRenderer({ data, visualization }: ChartRendererProps) {
             <PieChart>
               <Pie data={pieData} dataKey="value" nameKey="name" outerRadius={110} innerRadius={40} paddingAngle={2}>
                 {pieData.map((entry, index) => (
-                  <Cell key={`${entry.name}-${index}`} fill={['#2563eb', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444'][index % 5]} />
+                  <Cell key={`${entry.name}-${index}`} fill={colorAt(index)} />
                 ))}
               </Pie>
-              <Tooltip formatter={(value) => formatTooltipValue(value, visualization.y_axis?.format ?? "text")} />
+              <Tooltip formatter={(value) => formatTooltipValue(value, valueFormat)} />
+              <Legend />
             </PieChart>
           </ResponsiveContainer>
         </div>

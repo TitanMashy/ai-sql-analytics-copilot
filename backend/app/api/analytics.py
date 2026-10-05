@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, Request
 
 from app.analytics.dependencies import get_analytics_query_service
 from app.analytics.service import AnalyticsQueryService
+from app.core.auth import Principal, get_principal
+from app.core.rate_limit import enforce_rate_limit
 from app.schemas.analytics import (
     AnalyticsQueryRequest,
     AnalyticsQueryResponse,
@@ -9,7 +11,16 @@ from app.schemas.analytics import (
     ErrorResponse,
 )
 
-router = APIRouter(prefix="/analytics", tags=["analytics"])
+# Direct-SQL surface. It is only mounted when ENABLE_DIRECT_SQL_ENDPOINTS is on (off by default in
+# production) and is always authenticated and rate limited.
+router = APIRouter(
+    prefix="/analytics",
+    tags=["analytics"],
+    dependencies=[
+        Depends(get_principal),  # noqa: B008
+        Depends(enforce_rate_limit("direct")),  # noqa: B008
+    ],
+)
 
 
 @router.post(
@@ -29,13 +40,15 @@ def execute_analytics_query(
     request: Request,
     payload: AnalyticsQueryRequest,
     service: AnalyticsQueryService = Depends(get_analytics_query_service),  # noqa: B008
+    principal: Principal = Depends(get_principal),  # noqa: B008
 ) -> AnalyticsQueryResponse:
-    result = service.execute(payload.sql, request_id=request.state.request_id)
+    result = service.execute(payload.sql, request_id=request.state.request_id, principal=principal)
     return AnalyticsQueryResponse(
         columns=result.columns,
         rows=result.rows,
         row_count=result.row_count,
         execution_time_ms=result.execution_time_ms,
+        truncated=result.truncated,
     )
 
 
@@ -44,7 +57,7 @@ def execute_analytics_query(
     response_model=AnalyticsValidationResponse,
     summary="Validate an analytics SQL statement",
     description=(
-        "Run the conservative Sprint 3 SQL validation placeholder without executing the query."
+        "Run the AST-based SQL validator without executing the query."
     ),
     responses={422: {"model": ErrorResponse, "description": "Invalid request body"}},
 )

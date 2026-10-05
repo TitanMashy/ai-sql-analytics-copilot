@@ -24,6 +24,9 @@ class Visualization:
     title: str
     x_axis: VisualizationAxis | None = None
     y_axis: VisualizationAxis | None = None
+    # Every plotted measure when a chart has more than one; empty for a single measure
+    # (which is then ``y_axis``). Series always share one value format so they can share an axis.
+    series: tuple[VisualizationAxis, ...] = ()
 
 
 @dataclass(frozen=True)

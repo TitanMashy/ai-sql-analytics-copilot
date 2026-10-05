@@ -41,7 +41,7 @@ export function AnalyticsResults({ result }: AnalyticsResultsProps) {
         </div>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-slate-500">
           <span className="flex items-center gap-1.5"><Timer className="size-3.5" /> {Math.round(result.execution_time_ms)} ms</span>
-          <span className="flex items-center gap-1.5"><Rows3 className="size-3.5" /> {result.row_count} rows</span>
+          <span className="flex items-center gap-1.5"><Rows3 className="size-3.5" /> {result.row_count} rows{result.truncated ? " (truncated)" : ""}</span>
           <span className="flex items-center gap-1.5"><Database className="size-3.5" /> {result.tables_used.join(", ") || "Analytics"}</span>
         </div>
       </div>

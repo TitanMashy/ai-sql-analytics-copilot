@@ -110,11 +110,49 @@ def test_database_error_is_structured(client: TestClient) -> None:
     assert response.json()["error"]["code"] == "QUERY_PARSE_ERROR"
 
 
-def test_row_limit_is_enforced(client: TestClient) -> None:
+def test_results_over_the_row_cap_are_truncated_and_flagged(client: TestClient) -> None:
     response = client.post("/api/v1/analytics/query", json={"sql": "SELECT id FROM vehicles"})
 
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "RESULT_LIMIT_EXCEEDED"
+    assert response.status_code == 200
+    assert response.json()["row_count"] == 2
+    assert len(response.json()["rows"]) == 2
+    assert response.json()["truncated"] is True
+
+
+def test_results_within_the_row_cap_are_not_flagged(client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/analytics/query", json={"sql": "SELECT id FROM vehicles ORDER BY id LIMIT 2"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["row_count"] == 2
+    assert response.json()["truncated"] is False
+
+
+def test_sql_literals_with_colons_and_percent_signs_execute_as_written(
+    client: TestClient,
+) -> None:
+    colon = client.post(
+        "/api/v1/analytics/query",
+        json={"sql": "SELECT COUNT(*) AS n FROM vehicles WHERE status <> ' :status'"},
+    )
+    percent = client.post(
+        "/api/v1/analytics/query",
+        json={"sql": "SELECT COUNT(*) AS n FROM vehicles WHERE status LIKE 'act%'"},
+    )
+
+    assert colon.status_code == 200, colon.text
+    assert colon.json()["rows"] == [{"n": 3}]
+    assert percent.status_code == 200, percent.text
+    assert percent.json()["rows"] == [{"n": 2}]
+
+
+def test_validate_endpoint_reports_the_enforced_limit(client: TestClient) -> None:
+    response = client.post("/api/v1/analytics/validate", json={"sql": "SELECT id FROM vehicles"})
+
+    assert response.status_code == 200
+    assert response.json()["valid"] is True
+    assert any("LIMIT" in warning for warning in response.json()["warnings"])
 
 
 def test_result_values_are_json_safe() -> None:

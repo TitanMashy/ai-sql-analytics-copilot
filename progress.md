@@ -13,8 +13,8 @@ The technically interesting parts are the modular LLM provider boundary, determi
 ## 2. Current Status
 
 ```text
-Current status: Sprints 1–10 COMPLETE
-All planned sprint work is complete. Optional future improvements are listed below; no new sprint is currently in scope.
+Current status: Sprints 1–11 implemented (Sprint 11 not yet executed/verified; see sprints.md)
+Sprint 12 (reliability, quality gates, operations) is planned in sprints.md.
 ```
 
 | Sprint | Status | Description |
@@ -29,6 +29,7 @@ All planned sprint work is complete. Optional future improvements are listed bel
 | Sprint 8 | COMPLETE | Responsive Next.js dashboard, typed API integration, charts/results, Docker service, and frontend validation. |
 | Sprint 9 | COMPLETE | Production configuration, API limits/rate controls, metrics, health/readiness, provider reliability, frontend failure handling, deployment docs, and CI. |
 | Sprint 10 | COMPLETE | Final project documentation, portfolio narrative, verified handoff, and repository readiness. |
+| Sprint 11 | IMPLEMENTED, UNVERIFIED | Security hardening and correctness: narrowed proxy, JWT auth, per-principal limits, PII-free tenant-scoped analytics views, function allowlist, LIMIT enforcement, SQLSTATE errors and repair hints, request deadline, prompt/retrieval fixes, result-intelligence fixes. Written without running tests or the app; run the full suites before relying on it. |
 
 Recent implementation commits include Sprint 7 `9554013`, Sprint 8 `5639dd7`, and Sprint 9 `e1291e4`. The Sprint 10 documentation updates are intentionally uncommitted.
 
@@ -361,7 +362,7 @@ Values below are documented formats only. Real values belong in ignored `.env`, 
 | `POSTGRES_PASSWORD` | Fresh Compose database | Owner role password; supply at runtime only. |
 | `ANALYTICS_DATABASE_PASSWORD` | Fresh Compose database | Distinct read-only role password; supply at runtime only. |
 | `GEMINI_API_KEY` | Only when `LLM_MODE=gemini` | Google Gemini credential; never print or commit it. |
-| `GEMINI_MODEL` | No; default `gemini-flash-latest` | Gemini model name. |
+| `GEMINI_MODEL` | No; default `gemini-2.5-flash` | Gemini model name. |
 | `LLM_MODE` | No; default `mock` | `mock`, `gemini`, or legacy `openai`; mock is disabled in production. |
 | `LOG_LEVEL` | No; default `INFO` | Structured application log threshold. |
 | `LLM_TIMEOUT_SECONDS` | No; default `30` | Provider timeout; transient Gemini 5xx retries are bounded. |
@@ -477,6 +478,18 @@ Latest rerun, superseding the earlier 98-pass run below: backend `99 passed, 1 s
 - **Validation:** verified documentation claims against the implemented routes/configuration, reviewed recent Git history and the clean starting worktree, checked stale sprint references, and ran `git diff --check`. No application code, tests, CI, Docker, schema, or infrastructure files were changed in Sprint 10.
 - **Significance:** provides a technically credible account of both the production-oriented controls and the remaining non-enterprise limitations.
 
+### Sprint 11 — Security Hardening and Correctness
+
+Implemented from `sprints.md` (S11-01 to S11-22); nothing was executed when it was written, so run `make test`, `make lint`, the frontend suite, and the PostgreSQL integration tests first.
+
+- **Surface:** `frontend/next.config.ts` proxies an explicit route list only; `/query` and `/validate` are unmounted in production unless `ENABLE_DIRECT_SQL_ENDPOINTS`; `/metrics` needs `METRICS_TOKEN`; Compose publishes no backend port (`docker-compose.dev.yml` does, locally); Next.js sends CSP/frame/HSTS headers.
+- **Auth and limits:** `app/core/auth.py` (JWT / static / disabled; production requires JWT), `app/core/rate_limit.py` (per-principal route dependency, stricter LLM limit), owner-scoped conversations with user-only turns, TTL and caps.
+- **Data protection:** migration `b7c2d41f8a10` creates the `analytics` schema of PII-free, tenant-filtered views (`analytics.row_visible()` reading `app.scope` / `app.customer_id`); the role has no `public` privileges; the executor runs `SET TRANSACTION READ ONLY` plus `SET LOCAL` timeouts and tenant settings and uses `exec_driver_sql`. Deviation from the sprint text: tenant scoping lives in the views, not in RLS policies, because the view owner bypasses RLS.
+- **Validator:** function allowlist, schema-qualifier and PII-column rules, derived-table aliases, allowlist derived from metadata, outer `LIMIT` enforcement with truncation.
+- **Errors and repair:** SQLSTATE classification, `repair_hint` separate from the public message, conversation context in repair, `QUERY_GENERATION_FAILED` (422), and an overall request deadline (`REQUEST_DEADLINE_SECONDS`).
+- **Prompting:** full schema in every prompt, follow-up-aware retrieval, current date, enum values, system instruction, temperature 0, one shared repair prompt, assistant turns store SQL/tables, Gemini attempts reduced to 2, default model pinned to `gemini-2.5-flash` (verify it is available to your account).
+- **Results:** structural KPI detection, column-name-only formatting, multi-series charts, additive-only pies, distinct colours, short titles, direction-aware summaries; frontend sign-in prompt, generation-failed panel, truncated marker.
+
 ## 16. Known Limitations
 
 - **Conversation persistence is in-memory:** sessions are not durable across backend restarts and are not backed by user identity.
@@ -484,21 +497,21 @@ Latest rerun, superseding the earlier 98-pass run below: backend `99 passed, 1 s
 - **Rate limiting and metrics are process-local:** use a shared gateway/metrics backend before running multiple application replicas.
 - **Gemini readiness checks configuration, not remote quota/availability:** provider outages are surfaced safely when requests execute.
 - **PostgreSQL init passwords apply only to fresh clusters:** existing roles require explicit password rotation and URL updates.
-- **Compose port mappings target local development:** production should restrict backend/database/metrics access behind private networking and a trusted TLS gateway.
-- **No authentication or tenant authorization:** required before production multi-tenant use; database row ownership is modeled but API authorization is not implemented.
+- **Compose targets local development:** the backend is no longer published, but production still needs private networking, a trusted TLS gateway, and a secret manager (`JWT_SECRET` and keys are plain environment variables).
+- **No identity provider:** the API validates signed tokens and scopes queries to the token's customer, but nothing issues tokens in production (`backend/scripts/issue_token.py` is a development helper).
 - **No cost-based query planner:** query controls use AST heuristics, join/nesting limits, result limits, and timeouts; they do not estimate database cost.
 - **AST validator is defense in depth:** SQLGlot validation is stronger than regex but cannot be the sole security mechanism.
 - **Deterministic summaries are the default:** Gemini summary generation is an extension point, not active default behavior, to avoid an unnecessary extra provider call.
 - **Gemini availability is external:** a valid key/model can still receive provider-side capacity errors such as 503; API errors are handled without executing SQL.
-- **Schema retrieval is keyword-based:** no embeddings or vector store exist.
+- **Schema retrieval is keyword-ordered:** the full schema is sent by default (11 tables); narrowed keyword retrieval remains for larger schemas. No embeddings or vector store exist.
 - **No cloud deployment or external observability platform:** deployment is documented for Docker Compose; logs/metrics are local to the application process.
 - **Legacy OpenAI compatibility remains in code:** Gemini is the current configured path; do not remove or rewire providers without an explicit requirement.
 
 ## 17. Future Improvements
 
-Sprints 1–10 are complete. These are optional future product/security improvements, not unfinished sprint deliverables:
+Sprints 1–11 are implemented; Sprint 12 is planned in `sprints.md`. Remaining improvements:
 
-- Add authentication, authorization, tenant isolation, and database row policies before serving multiple customers.
+- Integrate an identity provider that issues the expected token claims.
 - Persist conversation history with per-user ownership, retention, and deletion controls.
 - Use a shared rate limiter and metrics aggregation if deploying multiple backend instances.
 - Add external log/metric collection and deployment-specific alerting.

@@ -1,0 +1,10 @@
+# Local debugging overrides. Use with the base file:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+# This publishes the backend directly on the host (bypassing the frontend proxy's route
+# allowlist) and enables the direct-SQL endpoints. Never use it outside a developer machine.
+services:
+  backend:
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      ENABLE_DIRECT_SQL_ENDPOINTS: "true"

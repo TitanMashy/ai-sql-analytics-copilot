@@ -119,3 +119,24 @@ def test_foreign_keys_are_enforced(database_session: Session) -> None:
 
     database_session.rollback()
     assert database_session.scalar(select(Customer.id)) == 1
+
+
+def test_schema_metadata_hides_personal_data_but_keeps_business_columns() -> None:
+    tables = {
+        table.name: {column.name for column in table.columns}
+        for table in get_schema_metadata()
+    }
+
+    assert tables["customers"].isdisjoint({"name", "email"})
+    assert {"company_name", "city", "status"} <= tables["customers"]
+    assert tables["users"].isdisjoint({"name", "email"})
+    assert tables["drivers"].isdisjoint({"name", "phone", "license_number"})
+    assert "license_expiry" in tables["drivers"]
+
+
+def test_schema_metadata_exposes_enumerated_values_from_check_constraints() -> None:
+    vehicles = next(table for table in get_schema_metadata() if table.name == "vehicles")
+    status = next(column for column in vehicles.columns if column.name == "status")
+
+    assert status.allowed_values == ("active", "inactive", "maintenance", "retired")
+    assert next(c for c in vehicles.columns if c.name == "registration_number").allowed_values == ()

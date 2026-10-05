@@ -4,12 +4,21 @@ import { useRef, useState } from "react";
 import { BarChart3, TriangleAlert } from "lucide-react";
 
 import { AnalyticsResults } from "@/components/analytics/analytics-results";
+import { GenerationFailed, SignInRequired } from "@/components/analytics/error-panels";
 import { QuestionComposer } from "@/components/analytics/question-composer";
 import { AppSidebar, type ConversationListItem } from "@/components/layout/app-sidebar";
 import { ApiError, askQuestion, createConversation } from "@/lib/api";
+import { setAuthToken } from "@/lib/auth";
 import type { AskResponse } from "@/types/api";
 
 type StatusKey = "idle" | "loading" | "error";
+type UiError = {
+  code: string;
+  message: string;
+  retryable: boolean;
+  debugSql?: string;
+  retryAfterSeconds?: number | null;
+};
 type ChatMessage = { type: "user" | "assistant"; content: string };
 type ConversationThread = ConversationListItem & {
   messages: ChatMessage[];
@@ -25,7 +34,7 @@ export function AnalyticsDashboard() {
   const submissionInProgress = useRef(false);
   const [draft, setDraft] = useState("");
   const [status, setStatus] = useState<StatusKey>("idle");
-  const [error, setError] = useState<{ code: string; message: string; retryable: boolean } | null>(null);
+  const [error, setError] = useState<UiError | null>(null);
   const [lastFailedQuestion, setLastFailedQuestion] = useState<string | null>(null);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [threads, setThreads] = useState<ConversationThread[]>([]);
@@ -77,7 +86,11 @@ export function AnalyticsDashboard() {
 
       const threadId = thread.id;
       const updatedThread = { ...thread, title: thread.messages.length ? thread.title : createTitleFromQuestion(question) };
-      if (!isRetry) {
+      // A retry normally finds its question already recorded; if the first attempt failed before
+      // the thread existed (for example a 401 while creating it), the question still has to be added.
+      const lastMessage = thread.messages[thread.messages.length - 1];
+      const alreadyRecorded = isRetry && lastMessage?.type === "user" && lastMessage.content === question;
+      if (!alreadyRecorded) {
         setThreads((previous) => {
           const exists = previous.some((item) => item.id === threadId);
           return exists
@@ -137,11 +150,33 @@ export function AnalyticsDashboard() {
             </div>
           )}
 
-          {error && (
+          {error?.code === "UNAUTHENTICATED" && (
+            <SignInRequired
+              onSubmit={(token) => {
+                setAuthToken(token);
+                setError(null);
+                if (lastFailedQuestion) {
+                  void submitQuestion(lastFailedQuestion, true);
+                } else {
+                  setStatus("idle");
+                }
+              }}
+            />
+          )}
+
+          {error?.code === "QUERY_GENERATION_FAILED" && (
+            <GenerationFailed message={error.message} debugSql={error.debugSql} />
+          )}
+
+          {error && error.code !== "UNAUTHENTICATED" && error.code !== "QUERY_GENERATION_FAILED" && (
             <div role="alert" className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
               <TriangleAlert className="mt-0.5 size-4 shrink-0" />
               <div className="flex flex-1 flex-wrap items-center justify-between gap-3">
-                <span><strong className="mr-2 font-semibold">{error.code}</strong>{error.message}</span>
+                <span>
+                  <strong className="mr-2 font-semibold">{error.code}</strong>
+                  {error.message}
+                  {error.retryAfterSeconds ? ` Try again in ${error.retryAfterSeconds}s.` : ""}
+                </span>
                 {error.retryable && lastFailedQuestion && (
                   <button
                     type="button"
@@ -182,9 +217,15 @@ export function AnalyticsDashboard() {
   );
 }
 
-function toUiError(error: unknown, fallback: string) {
+function toUiError(error: unknown, fallback: string): UiError {
   if (error instanceof ApiError) {
-    return { code: error.code, message: error.message, retryable: error.retryable };
+    return {
+      code: error.code,
+      message: error.message,
+      retryable: error.retryable,
+      debugSql: error.debug?.sql,
+      retryAfterSeconds: error.retryAfterSeconds,
+    };
   }
   return {
     code: "REQUEST_FAILED",

@@ -53,6 +53,22 @@ def test_gemini_provider_uses_structured_json_and_shared_parser() -> None:
     assert config.response_schema is not None
 
 
+def test_gemini_provider_sends_rules_as_system_instruction_at_temperature_zero() -> None:
+    client = FakeClient(['{"sql":"SELECT 1","explanation":"x","tables_used":[]}'])
+    provider = GeminiProvider(_settings(), client=client)
+    context = SchemaRetriever().retrieve("What is the active vehicle count?")
+
+    provider.generate_sql("What is the active vehicle count?", context, "user: earlier")
+
+    call = client.models.calls[0]
+    config = call["config"]
+    assert "Do not invent identifiers" in config.system_instruction
+    assert config.temperature == 0.0
+    # The rules are not repeated in the user prompt, which carries only data.
+    assert "Do not invent identifiers" not in str(call["contents"])
+    assert "user: earlier" in str(call["contents"])
+
+
 def test_gemini_provider_repair_uses_same_structured_path() -> None:
     client = FakeClient(
         [
@@ -68,10 +84,15 @@ def test_gemini_provider_repair_uses_same_structured_path() -> None:
         "SELECT missing FROM vehicles",
         "Unknown column",
         context,
+        conversation_context="user: earlier question",
     )
 
+    call = client.models.calls[0]
     assert result.sql == "SELECT id FROM vehicles"
-    assert "Unknown column" in str(client.models.calls[0]["contents"])
+    assert "Unknown column" in str(call["contents"])
+    assert "SELECT missing FROM vehicles" in str(call["contents"])
+    assert "user: earlier question" in str(call["contents"])
+    assert call["config"].temperature == 0.0
 
 
 def test_gemini_provider_handles_empty_response() -> None:
@@ -160,5 +181,5 @@ def test_gemini_client_uses_timeout_and_bounded_transient_retries(monkeypatch) -
     http_options = captured["http_options"]
     assert captured["api_key"] == "test-key"
     assert http_options.timeout == 4500
-    assert http_options.retry_options.attempts == 3
+    assert http_options.retry_options.attempts == 2
     assert http_options.retry_options.http_status_codes == [500, 502, 503, 504]

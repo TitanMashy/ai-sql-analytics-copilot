@@ -1,3 +1,4 @@
+import re
 from datetime import date, datetime
 from typing import Any
 
@@ -7,6 +8,17 @@ from app.services.result_models import (
     ResultAnalysis,
     ValueFormat,
 )
+
+
+COUNT_TOKENS = frozenset({"count", "number", "num", "qty", "quantity"})
+CURRENCY_TOKENS = frozenset(
+    {"revenue", "cost", "amount", "price", "spend", "fee", "fees", "balance", "income", "sales"}
+)
+PERCENT_TOKENS = frozenset({"percent", "percentage", "pct", "ratio", "rate"})
+
+
+def _name_tokens(column: str) -> set[str]:
+    return {token for token in re.split(r"[^a-z0-9]+", column.casefold()) if token}
 
 
 class AnalyticsResultAnalyzer:
@@ -45,7 +57,7 @@ class AnalyticsResultAnalyzer:
         values = [row.get(column) for row in rows]
         non_null = [value for value in values if value is not None]
         normalized_name = column.casefold()
-        format_type = self._format_for(column, question)
+        format_type = self._format_for(column, declared_type)
         is_identifier = (
             normalized_name == "id"
             or normalized_name.endswith("_id")
@@ -87,43 +99,19 @@ class AnalyticsResultAnalyzer:
         profiles: tuple[ColumnProfile, ...],
         rows: list[dict[str, Any]],
     ) -> KPI | None:
+        """A KPI is a single row with a single numeric measure, regardless of question wording."""
         if len(rows) != 1:
             return None
         if any(profile.kind in {"datetime", "categorical"} for profile in profiles):
             return None
-        normalized_question = question.casefold()
         candidates = [
             profile
             for profile in profiles
             if profile.kind == "numeric" and not profile.name.casefold().endswith("_id")
         ]
-        if not candidates:
+        if len(candidates) != 1:
             return None
-        if not any(
-            keyword in normalized_question
-            for keyword in (
-                "total",
-                "count",
-                "number",
-                "average",
-                "avg",
-                "amount",
-                "revenue",
-                "cost",
-            )
-        ):
-            return None
-        candidate = next(
-            (
-                profile
-                for profile in candidates
-                if any(
-                    word in profile.name.casefold()
-                    for word in ("revenue", "count", "total", "average", "avg", "cost", "amount")
-                )
-            ),
-            candidates[0],
-        )
+        candidate = candidates[0]
         return KPI(
             label=self._kpi_label(question, candidate.name),
             value=rows[0].get(candidate.name),
@@ -141,13 +129,21 @@ class AnalyticsResultAnalyzer:
         return column.replace("_", " ").title()
 
     @staticmethod
-    def _format_for(column: str, question: str) -> ValueFormat:
-        text = f"{column} {question}".casefold()
-        if any(word in text for word in ("revenue", "cost", "amount", "price")):
+    def _format_for(column: str, declared_type: str = "unknown") -> ValueFormat:
+        """Choose a display format from the column's name and type only.
+
+        The question text is deliberately ignored: a question that mentions "revenue" must not
+        turn every column into currency, and substrings such as ``rate`` inside ``generated``
+        must not count, so the column name is compared token by token.
+        """
+        tokens = _name_tokens(column)
+        if tokens & COUNT_TOKENS:
+            return "integer"
+        if tokens & CURRENCY_TOKENS:
             return "currency"
-        if any(word in text for word in ("percent", "percentage", "ratio", "rate")):
+        if tokens & PERCENT_TOKENS:
             return "percentage"
-        if any(word in column.casefold() for word in ("count", "number")):
+        if declared_type == "integer":
             return "integer"
         return "decimal"
 

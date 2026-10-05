@@ -1,7 +1,9 @@
+import re
 from dataclasses import dataclass
 
-from sqlalchemy import inspect
+from sqlalchemy import CheckConstraint, inspect
 
+from app.db.analytics_surface import PII_COLUMNS
 from app.db.base import Base
 from app.models import entities  # noqa: F401
 
@@ -11,6 +13,7 @@ class ColumnMetadata:
     name: str
     data_type: str
     nullable: bool
+    allowed_values: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -44,14 +47,40 @@ TABLE_DESCRIPTIONS = {
 }
 
 
+_IN_CHECK = re.compile(r"(\w+)\s+IN\s*\(([^)]*)\)", re.IGNORECASE)
+_QUOTED_VALUE = re.compile(r"'([^']*)'")
+
+
+def _allowed_values(table) -> dict[str, tuple[str, ...]]:
+    """Enumerated values from ``column IN ('a', 'b')`` CHECK constraints."""
+    values: dict[str, tuple[str, ...]] = {}
+    for constraint in table.constraints:
+        if not isinstance(constraint, CheckConstraint):
+            continue
+        for column_name, options in _IN_CHECK.findall(str(constraint.sqltext)):
+            parsed = tuple(_QUOTED_VALUE.findall(options))
+            if parsed:
+                values[column_name] = parsed
+    return values
+
+
 def get_schema_metadata() -> tuple[TableMetadata, ...]:
+    """Metadata for the analytics surface: allowed tables, minus personal-data columns."""
     metadata = []
     for table in sorted(Base.metadata.tables.values(), key=lambda item: item.name):
         if table.name == "seed_runs":
             continue
+        hidden = PII_COLUMNS.get(table.name, frozenset())
+        enumerations = _allowed_values(table)
         columns = tuple(
-            ColumnMetadata(column.name, str(column.type), column.nullable)
+            ColumnMetadata(
+                column.name,
+                str(column.type),
+                column.nullable,
+                enumerations.get(column.name, ()),
+            )
             for column in table.columns
+            if column.name not in hidden
         )
         relationships = tuple(
             RelationshipMetadata(
@@ -61,6 +90,7 @@ def get_schema_metadata() -> tuple[TableMetadata, ...]:
                 foreign_key.column.name,
             )
             for column in table.columns
+            if column.name not in hidden
             for foreign_key in column.foreign_keys
         )
         metadata.append(

@@ -1,5 +1,7 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
+from app.core.auth import get_principal
+from app.core.rate_limit import enforce_rate_limit
 from app.db.schema_metadata import TableMetadata, get_schema_metadata
 from app.schemas.schema import (
     ColumnMetadataResponse,
@@ -9,7 +11,14 @@ from app.schemas.schema import (
     TableMetadataResponse,
 )
 
-router = APIRouter(prefix="/schema", tags=["schema"])
+router = APIRouter(
+    prefix="/schema",
+    tags=["schema"],
+    dependencies=[
+        Depends(get_principal),  # noqa: B008
+        Depends(enforce_rate_limit("read")),  # noqa: B008
+    ],
+)
 
 
 def _to_response(table: TableMetadata) -> TableMetadataResponse:

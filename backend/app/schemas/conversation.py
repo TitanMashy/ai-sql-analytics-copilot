@@ -8,7 +8,9 @@ from app.core.config import get_settings
 
 
 class ConversationTurnRequest(BaseModel):
-    role: Literal["user", "assistant", "system"] = Field(default="user")
+    # Clients may only add their own turns. Assistant and system turns are written by the
+    # server, so a caller cannot plant instructions that later look like trusted history.
+    role: Literal["user"] = Field(default="user")
     content: str = Field(..., min_length=1, max_length=10000)
 
     @field_validator("content")

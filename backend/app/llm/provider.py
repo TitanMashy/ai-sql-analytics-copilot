@@ -36,4 +36,5 @@ class LLMProvider(Protocol):
         original_sql: str,
         error_message: str,
         schema_context: SchemaContext,
+        conversation_context: str | None = None,
     ) -> LLMGeneration: ...
