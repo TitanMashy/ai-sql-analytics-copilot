@@ -45,7 +45,7 @@ jobs:
           python -m pip install -e ".[dev]"
           python -m ruff check .
           python -m pytest -m "not integration"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
