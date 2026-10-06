@@ -1,40 +1,58 @@
-import hmac
 import logging
 from time import perf_counter
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.analytics.service import AnalyticsServiceError
 from app.api.analytics import router as analytics_router
 from app.api.conversations import router as conversations_router
+from app.api.feedback import router as feedback_router
 from app.api.generation import router as generation_router
 from app.api.health import readiness_check
 from app.api.health import router as health_router
 from app.api.schema import router as schema_router
-from app.conversation.service import ConversationAccessError
-from app.core.config import get_settings
+from app.conversation.service import ConversationAccessError, get_conversation_memory
+from app.core.config import ConfigurationError, get_settings
 from app.core.logging import configure_logging
-from app.core.metrics import metrics
+from app.core.metrics import CONTENT_TYPE_PROMETHEUS, metrics
 from app.core.middleware import (
     RequestSizeLimitMiddleware,
     request_id_from_headers,
 )
+from app.core.ops_auth import authorize_operator, error_response
 from app.core.rate_limit import RateLimitExceeded
 from app.core.telemetry import (
     RequestTelemetry,
     reset_request_telemetry,
     set_request_telemetry,
 )
+from app.core.tracing import configure_tracing, record_span_error, set_span_attribute, span
 from app.llm.provider import LLMProviderError
 
-settings = get_settings()
+try:
+    settings = get_settings()
+except ConfigurationError as configuration_error:
+    # Fail at startup with every problem named (and no values), not with a stack trace.
+    raise SystemExit(str(configuration_error)) from None
 configure_logging(settings.effective_log_level)
 
 logger = logging.getLogger(__name__)
+tracing_active = configure_tracing(settings)
+metrics.set_build_info(settings.app_version)
+
+
+def _active_conversations() -> float:
+    try:
+        return float(get_conversation_memory().count_active())
+    except Exception:  # the gauge is advisory; a failing store must not break /metrics
+        return 0.0
+
+
+metrics.set_active_conversations_source(_active_conversations)
 if settings.auth_mode != "jwt":
     logger.warning(
         "AUTH_MODE=%s does not enforce signed tokens; do not use in production",
@@ -56,6 +74,7 @@ if settings.direct_sql_endpoints_enabled:
     app.include_router(analytics_router, prefix="/api/v1")
 app.include_router(generation_router, prefix="/api/v1")
 app.include_router(conversations_router, prefix="/api/v1")
+app.include_router(feedback_router, prefix="/api/v1")
 app.include_router(schema_router, prefix="/api/v1")
 app.add_api_route("/health", lambda: {"status": "ok"}, methods=["GET"], include_in_schema=False)
 app.add_api_route(
@@ -63,33 +82,26 @@ app.add_api_route(
 )
 
 
-def metrics_snapshot(request: Request) -> JSONResponse:
-    """Process-local metrics. Bearer-protected when METRICS_TOKEN is set.
-
-    With no token configured the endpoint is open outside production and disabled (404) in
-    production, so an unconfigured deployment never exposes it.
-    """
-    request_id = getattr(request.state, "request_id", None)
-    configured = settings.metrics_token.get_secret_value() if settings.metrics_token else ""
-    if not configured:
-        if settings.is_production:
-            return _error_response(404, "NOT_FOUND", "Not found.", request_id)
-        return JSONResponse(metrics.snapshot())
-    scheme, _, supplied = request.headers.get("authorization", "").partition(" ")
-    if scheme.lower() != "bearer" or not hmac.compare_digest(
-        supplied.strip().encode(), configured.encode()
-    ):
-        return _error_response(
-            401,
-            "UNAUTHENTICATED",
-            "A valid metrics token is required.",
-            request_id,
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+def metrics_snapshot(request: Request) -> Response:
+    """Process-local metrics as JSON. Operator-token protected (see ``authorize_operator``)."""
+    denied = authorize_operator(request, settings)
+    if denied is not None:
+        return denied
     return JSONResponse(metrics.snapshot())
 
 
+def metrics_prometheus(request: Request) -> Response:
+    """The same counters plus labelled histograms in Prometheus text exposition format."""
+    denied = authorize_operator(request, settings)
+    if denied is not None:
+        return denied
+    return Response(content=metrics.render_prometheus(), media_type=CONTENT_TYPE_PROMETHEUS)
+
+
 app.add_api_route("/api/v1/metrics", metrics_snapshot, methods=["GET"], include_in_schema=False)
+app.add_api_route(
+    "/api/v1/metrics/prometheus", metrics_prometheus, methods=["GET"], include_in_schema=False
+)
 app.add_middleware(
     RequestSizeLimitMiddleware,
     max_body_bytes=settings.max_request_body_bytes,
@@ -97,7 +109,7 @@ app.add_middleware(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_allowed_origins,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization", "X-Request-ID"],
     expose_headers=["X-Request-ID", "Retry-After"],
 )
@@ -114,18 +126,26 @@ async def request_context_middleware(request: Request, call_next):
     started_at = perf_counter()
     path = request.url.path
     try:
-        try:
-            response = await call_next(request)
-        except Exception as error:
-            logger.error(
-                "unhandled request failure",
-                extra={
-                    "request_id": request_id,
-                    "endpoint": path,
-                    "error_type": type(error).__name__,
-                },
-            )
-            response = _internal_error_response(request_id)
+        with span("http.request", request_id=request_id, method=request.method) as current:
+            try:
+                response = await call_next(request)
+            except Exception as error:
+                logger.error(
+                    "unhandled request failure",
+                    extra={
+                        "request_id": request_id,
+                        "endpoint": path,
+                        "error_type": type(error).__name__,
+                    },
+                )
+                response = _internal_error_response(request_id)
+            route = request.scope.get("route")
+            # The route template (never the raw path) keeps metric and span labels bounded.
+            endpoint = getattr(route, "path", None)
+            set_span_attribute(current, "http.route", endpoint or "unmatched")
+            set_span_attribute(current, "http.status_code", response.status_code)
+            if response.status_code >= 500:
+                record_span_error(current, f"HTTP_{response.status_code}")
 
         elapsed_ms = (perf_counter() - started_at) * 1000
         response.headers["X-Request-ID"] = request_id
@@ -133,8 +153,10 @@ async def request_context_middleware(request: Request, call_next):
         telemetry.conversation_id = telemetry.conversation_id or getattr(
             request.state, "conversation_id", None
         )
-        route = request.scope.get("route")
-        endpoint = getattr(route, "path", path)
+        metrics.record_http_request(
+            endpoint or "unmatched", request.method, response.status_code, elapsed_ms / 1000
+        )
+        endpoint = endpoint or path
         if _is_analytics_request(path, request.method):
             metrics.record_analytics_request(response.status_code, elapsed_ms)
         logger.info(
@@ -164,10 +186,15 @@ def _error_response(
     headers: dict[str, str] | None = None,
     debug: dict | None = None,
 ) -> JSONResponse:
-    error: dict = {"code": code, "message": message, "request_id": request_id}
-    if debug and not settings.is_production:
-        error["debug"] = debug
-    return JSONResponse(status_code=status_code, content={"error": error}, headers=headers)
+    return error_response(
+        status_code,
+        code,
+        message,
+        request_id,
+        headers=headers,
+        debug=debug,
+        include_debug=not settings.is_production,
+    )
 
 
 @app.exception_handler(RateLimitExceeded)

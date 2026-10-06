@@ -8,8 +8,13 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   backend:
+    name: Backend (lint, types, unit tests, coverage)
     runs-on: ubuntu-latest
     env:
       LLM_MODE: mock
@@ -18,6 +23,83 @@ jobs:
       ANALYTICS_DATABASE_URL: sqlite:///./ci-analytics.db
       POSTGRES_PASSWORD: ci-only-password
       ANALYTICS_DATABASE_PASSWORD: ci-only-readonly-password
+      FUZZ_SEED: "20261006"
+      FUZZ_ITERATIONS: "300"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+      - name: Install backend
+        working-directory: backend
+        run: python -m pip install -e ".[dev,tracing]"
+      - name: Lint
+        working-directory: backend
+        run: python -m ruff check .
+      - name: Format check
+        working-directory: backend
+        run: python -m ruff format --check .
+      - name: Type check
+        working-directory: backend
+        run: python -m mypy
+      - name: Unit tests with coverage (includes the seeded fuzz run)
+        working-directory: backend
+        run: >-
+          python -m pytest -m "not integration"
+          --cov=app --cov-report=term --cov-report=json:coverage.json
+      - name: Coverage gate for the security-critical packages
+        working-directory: backend
+        run: python scripts/check_coverage.py coverage.json
+      - name: Lockfile is current
+        run: |
+          if [ -f backend/requirements.lock ]; then
+            python -m pip install pip-tools
+            make lock-check
+          else
+            echo "::warning::backend/requirements.lock does not exist yet. Run 'make lock' and commit it."
+          fi
+      - name: Dependency vulnerability audit
+        working-directory: backend
+        run: python -m pip_audit --strict --progress-spinner off
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: backend/coverage.json
+          if-no-files-found: ignore
+
+  integration:
+    name: Integration (PostgreSQL, Redis, tenant isolation, evaluation subset)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: app
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: ci-owner-password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U app -d app"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      APP_ENV: test
+      LLM_MODE: mock
+      DATABASE_URL: postgresql+psycopg://app:ci-owner-password@localhost:5432/app
+      ANALYTICS_DATABASE_URL: postgresql+psycopg://analytics_readonly:ci-readonly-password@localhost:5432/app
+      REDIS_URL: redis://localhost:6379/0
+      # A missing database or Redis must FAIL these tests, never skip them.
+      REQUIRE_INTEGRATION: "1"
+      PGPASSWORD: ci-owner-password
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -28,18 +110,50 @@ jobs:
       - name: Install backend
         working-directory: backend
         run: python -m pip install -e ".[dev]"
-      - name: Lint backend
+      - name: Create the read-only analytics role
+        env:
+          ANALYTICS_DATABASE_PASSWORD: ci-readonly-password
+        run: psql -h localhost -U app -d app -v ON_ERROR_STOP=1 -f database/init/01-analytics-role.sql
+      - name: Migrate (one-shot, as in production)
         working-directory: backend
-        run: python -m ruff check .
-      - name: Test backend
+        run: python -m alembic upgrade head
+      - name: Seed demo data
         working-directory: backend
-        run: python -m pytest
-      - name: Validate Compose
+        run: python -m app.db.seed
+      - name: Verify the privilege model
+        run: psql -h localhost -U app -d app -v ON_ERROR_STOP=1 -f database/verify-readonly.sql
+      - name: Migration downgrade and upgrade round trip
+        working-directory: backend
         run: |
-          docker compose config --quiet
-          docker compose -f docker-compose.yml -f docker-compose.dev.yml config --quiet
+          python -m alembic downgrade 9a999e64b310
+          python -m alembic upgrade head
+      - name: Integration tests
+        working-directory: backend
+        run: python -m pytest -m integration -rs
+      - name: Evaluation dataset runs against seeded PostgreSQL
+        working-directory: backend
+        run: python -m evals.run_eval --check-references
+      - name: Deterministic evaluation subset (mock provider)
+        working-directory: backend
+        run: >-
+          python -m evals.run_eval --provider mock --subset mock
+          --report eval-report.json --markdown eval-summary.md
+      - name: Publish evaluation summary
+        if: always()
+        run: |
+          if [ -f backend/eval-summary.md ]; then cat backend/eval-summary.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - name: Upload evaluation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evaluation-mock
+          path: |
+            backend/eval-report.json
+            backend/eval-summary.md
+          if-no-files-found: ignore
 
   frontend:
+    name: Frontend (lint, tests, build, audit)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -54,9 +168,96 @@ jobs:
       - name: Lint frontend
         working-directory: frontend
         run: npm run lint
-      - name: Test frontend
+      - name: Test frontend (includes the API contract check)
         working-directory: frontend
         run: npm test -- --run
       - name: Build frontend
         working-directory: frontend
         run: npm run build
+      - name: Production dependency audit
+        working-directory: frontend
+        run: npm audit --omit=dev --audit-level=high
+
+  images:
+    name: Docker images (build, scan, Compose)
+    runs-on: ubuntu-latest
+    env:
+      POSTGRES_PASSWORD: ci-only-password
+      ANALYTICS_DATABASE_PASSWORD: ci-only-readonly-password
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Compose files
+        run: |
+          docker compose config --quiet
+          docker compose -f docker-compose.yml -f docker-compose.dev.yml config --quiet
+          docker compose -f docker-compose.yml -f docker-compose.loadtest.yml config --quiet
+          docker compose --profile redis --profile demo --profile ops config --quiet
+      - name: Build backend image
+        run: docker build -t analytics-backend:ci backend
+      - name: Build frontend image
+        run: docker build -t analytics-frontend:ci --build-arg INTERNAL_API_URL=http://backend:8000 frontend
+      - name: Scan backend image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: analytics-backend:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Scan frontend image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: analytics-frontend:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+  e2e:
+    name: End to end (Playwright, axe)
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure the stack (mock provider)
+        run: |
+          cp .env.example .env
+          {
+            echo "POSTGRES_PASSWORD=ci-owner-password"
+            echo "ANALYTICS_DATABASE_PASSWORD=ci-readonly-password"
+            echo "LLM_MODE=mock"
+            # Every browser test shares one client address; keep the limits out of the way.
+            echo "RATE_LIMIT_REQUESTS=1000"
+            echo "RATE_LIMIT_LLM_REQUESTS=1000"
+          } >> .env
+      - name: Start the stack
+        run: docker compose up -d --build
+      - name: Wait for the frontend and backend
+        run: >-
+          curl --fail --silent --show-error --retry 60 --retry-delay 5 --retry-connrefused
+          http://localhost:3000/api/v1/health/ready
+      - name: Seed demo data
+        run: docker compose --profile demo run --rm seed
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Playwright
+        working-directory: e2e
+        run: |
+          npm install
+          npx playwright install --with-deps chromium
+      - name: Run the browser tests
+        working-directory: e2e
+        env:
+          CI: "true"
+        run: npx playwright test
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            e2e/playwright-report
+            e2e/test-results
+          if-no-files-found: ignore
+      - name: Show service logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail=200

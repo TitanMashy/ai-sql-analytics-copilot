@@ -1,5 +1,7 @@
+import hashlib
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 
 from sqlalchemy import CheckConstraint, inspect
 
@@ -102,6 +104,23 @@ def get_schema_metadata() -> tuple[TableMetadata, ...]:
             )
         )
     return tuple(metadata)
+
+
+@lru_cache
+def schema_fingerprint() -> str:
+    """A short hash of the analytics surface (tables, columns, types, enum values).
+
+    Used to version caches: any schema change produces a new fingerprint, which invalidates
+    entries created against the old schema.
+    """
+    digest = hashlib.sha256()
+    for table in get_schema_metadata():
+        digest.update(table.name.encode())
+        for column in table.columns:
+            allowed = ",".join(column.allowed_values)
+            digest.update(f"|{column.name}:{column.data_type}:{allowed}".encode())
+        digest.update(b";")
+    return digest.hexdigest()[:16]
 
 
 def get_database_schema(engine: object) -> tuple[TableMetadata, ...]:

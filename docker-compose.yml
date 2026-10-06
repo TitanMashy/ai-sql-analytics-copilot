@@ -60,6 +60,21 @@ services:
       # proxy's X-Forwarded-For can be trusted. Narrow this to the frontend's address if the
       # backend is ever exposed more widely.
       FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-*}
+      APP_VERSION: ${APP_VERSION:-0.0.0-dev}
+      # Conversations and the audit trail are durable by default here because PostgreSQL is
+      # already part of the stack; the `migrate` service creates their tables.
+      CONVERSATION_STORE: ${CONVERSATION_STORE:-postgres}
+      CONVERSATION_TTL_DAYS: ${CONVERSATION_TTL_DAYS:-30}
+      AUDIT_SINK: ${AUDIT_SINK:-both}
+      # Shared rate limiting needs Redis: `docker compose --profile redis up` and set
+      # RATE_LIMIT_BACKEND=redis REDIS_URL=redis://redis:6379/0.
+      RATE_LIMIT_BACKEND: ${RATE_LIMIT_BACKEND:-memory}
+      RATE_LIMIT_FAIL_MODE: ${RATE_LIMIT_FAIL_MODE:-open}
+      REDIS_URL: ${REDIS_URL:-}
+      SQL_CACHE_ENABLED: ${SQL_CACHE_ENABLED:-false}
+      QUERY_COST_LIMIT: ${QUERY_COST_LIMIT:-1000000}
+      OTEL_ENABLED: ${OTEL_ENABLED:-false}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     # No published port: only the frontend (the same-origin proxy) reaches the backend.
     # Use docker-compose.dev.yml to publish it for local debugging.
     expose:
@@ -76,11 +91,76 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    # /health/ready answers 200 while the instance can serve, including when it reports
+    # {"status": "degraded"} (for example a missing LLM key), so Compose never restarts a healthy
+    # container over an optional dependency. Only an unreachable database makes it unhealthy.
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')"]
       interval: 10s
       timeout: 5s
       retries: 5
+
+  # One-shot migration job. The backend never migrates at startup, so scaling it to several
+  # replicas cannot race several migrations; `docker compose up` runs this once, first.
+  migrate:
+    build:
+      context: ./backend
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://app:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/app}
+      ANALYTICS_DATABASE_URL: ${ANALYTICS_DATABASE_URL:-postgresql+psycopg://analytics_readonly:${ANALYTICS_DATABASE_PASSWORD:?Set ANALYTICS_DATABASE_PASSWORD in .env}@postgres:5432/app}
+      APP_ENV: ${APP_ENV:-development}
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Demo data for development, CI, and evaluation: `docker compose --profile demo run --rm seed`.
+  # The seed refuses to run when APP_ENV=production.
+  seed:
+    profiles: ["demo"]
+    build:
+      context: ./backend
+    command: ["python", "-m", "app.db.seed"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://app:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/app}
+      ANALYTICS_DATABASE_URL: ${ANALYTICS_DATABASE_URL:-postgresql+psycopg://analytics_readonly:${ANALYTICS_DATABASE_PASSWORD:?Set ANALYTICS_DATABASE_PASSWORD in .env}@postgres:5432/app}
+      APP_ENV: ${APP_ENV:-development}
+    restart: "no"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  # Retention: `docker compose --profile ops run --rm purge` (schedule it with cron or CI).
+  purge:
+    profiles: ["ops"]
+    build:
+      context: ./backend
+    command: ["python", "-m", "app.jobs.purge"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://app:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/app}
+      ANALYTICS_DATABASE_URL: ${ANALYTICS_DATABASE_URL:-postgresql+psycopg://analytics_readonly:${ANALYTICS_DATABASE_PASSWORD:?Set ANALYTICS_DATABASE_PASSWORD in .env}@postgres:5432/app}
+      CONVERSATION_STORE: ${CONVERSATION_STORE:-postgres}
+      CONVERSATION_TTL_DAYS: ${CONVERSATION_TTL_DAYS:-30}
+      AUDIT_SINK: ${AUDIT_SINK:-both}
+      AUDIT_RETENTION_DAYS: ${AUDIT_RETENTION_DAYS:-365}
+    restart: "no"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  # Optional shared counter store for rate limiting across replicas (profile: redis).
+  redis:
+    profiles: ["redis"]
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   frontend:
     build:

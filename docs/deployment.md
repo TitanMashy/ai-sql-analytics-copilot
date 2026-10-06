@@ -107,3 +107,19 @@ Use HTTPS at a trusted reverse proxy and restrict public access to the API, metr
 ## Limitations
 
 Rate limiting, metrics, and conversations are process-local. Multi-instance deployments need a shared rate limiter, metrics aggregation, and durable conversation storage. The application validates signed tokens and scopes every query to the token's customer, but it does not issue tokens: supply an identity provider (or your own issuer) that sets `sub`, `iss`, `aud`, `exp`, `roles`, and `customer_id`. Result caching is intentionally absent because invalidation policy is not defined. `INTERNAL_API_URL` is applied when `next build` evaluates the proxy rewrites, so it is a build-time value for the frontend image. Production connection-pool sizing should follow real load tests and the PostgreSQL connection budget.
+
+
+## Sprint 12 settings and services
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `CONVERSATION_STORE` | `memory` or `postgres` (durable, shared by replicas; needs migrations) | `memory`; Compose uses `postgres` |
+| `CONVERSATION_TTL_DAYS`, `CONVERSATION_MAX_PER_OWNER`, `CONVERSATION_MAX_TURNS` | retention and caps | 30, 200, 8 |
+| `RATE_LIMIT_BACKEND`, `REDIS_URL`, `RATE_LIMIT_FAIL_MODE` | `memory` or `redis`; `open` or `closed` when Redis is down | `memory`, unset, `open` |
+| `SQL_CACHE_ENABLED`, `SQL_CACHE_TTL_SECONDS`, `SQL_CACHE_MAX_ENTRIES` | prompt-to-SQL cache (SQL only, never rows) | off |
+| `QUERY_COST_LIMIT` | reject plans above this PostgreSQL cost; empty disables | 1,000,000 |
+| `AUDIT_SINK`, `AUDIT_RETENTION_DAYS` | `log`, `database`, or `both` | `log`; Compose `both`; 365 |
+| `OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT` | optional tracing (`pip install ".[tracing]"`) | off |
+| `<SECRET>_FILE` | read `DATABASE_URL`, `ANALYTICS_DATABASE_URL`, `GEMINI_API_KEY`, `OPENAI_API_KEY`, `AUTH_STATIC_TOKEN`, `JWT_SECRET`, `JWT_PUBLIC_KEY`, `METRICS_TOKEN`, or `REDIS_URL` from a file | setting both is a startup error |
+
+Compose adds a one-shot `migrate` service (the backend waits for it), plus `seed` (profile `demo`), `purge` (profile `ops`), and `redis` (profile `redis`). Readiness (`/health/ready`) returns 503 only for required dependencies and 200 with `{"status": "degraded"}` for optional ones. Operating, releasing, rolling back, and incident response: [operations.md](operations.md). Kubernetes examples: `ops/kubernetes/`.

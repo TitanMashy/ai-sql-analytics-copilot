@@ -3,6 +3,7 @@ from functools import lru_cache
 from app.analytics.dependencies import get_analytics_query_service
 from app.conversation.service import get_conversation_memory
 from app.core.config import get_settings
+from app.db.schema_metadata import schema_fingerprint
 from app.llm.gemini_provider import GeminiProvider
 from app.llm.mock_provider import MockLLMProvider
 from app.llm.openai_provider import OpenAIProvider
@@ -10,6 +11,7 @@ from app.llm.provider import LLMProvider, LLMProviderError
 from app.services.generation import SQLGenerationService
 from app.services.result_summary import ResultSummaryService
 from app.services.schema_retriever import SchemaRetriever
+from app.services.sql_cache import get_sql_cache
 
 
 @lru_cache
@@ -22,7 +24,9 @@ def get_llm_provider() -> LLMProvider:
                 "The mock provider is disabled in production.",
                 503,
             )
-        return MockLLMProvider()
+        return MockLLMProvider(
+            latency_ms=settings.mock_llm_latency_ms, jitter_ms=settings.mock_llm_jitter_ms
+        )
     if settings.llm_mode.casefold() == "openai":
         return OpenAIProvider(settings)
     if settings.llm_mode.casefold() == "gemini":
@@ -44,4 +48,6 @@ def get_sql_generation_service() -> SQLGenerationService:
         summary_service=ResultSummaryService(enabled=get_settings().enable_result_summary),
         conversation_memory=get_conversation_memory(),
         request_deadline_seconds=get_settings().request_deadline_seconds,
+        sql_cache=get_sql_cache(),
+        schema_version=schema_fingerprint(),
     )

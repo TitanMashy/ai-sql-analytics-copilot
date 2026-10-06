@@ -1,29 +1,46 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { BarChart3, TriangleAlert } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 import { AnalyticsResults } from "@/components/analytics/analytics-results";
-import { GenerationFailed, SignInRequired } from "@/components/analytics/error-panels";
+import {
+  ErrorNotice,
+  GenerationFailed,
+  SignInRequired,
+  type UiError,
+} from "@/components/analytics/error-panels";
+import { ExamplesPanel } from "@/components/analytics/examples-panel";
 import { QuestionComposer } from "@/components/analytics/question-composer";
 import { AppSidebar, type ConversationListItem } from "@/components/layout/app-sidebar";
-import { ApiError, askQuestion, createConversation } from "@/lib/api";
+import {
+  ApiError,
+  askQuestion,
+  createConversation,
+  deleteConversation,
+  getConversation,
+  submitFeedback,
+} from "@/lib/api";
 import { setAuthToken } from "@/lib/auth";
+import {
+  forgetConversation,
+  loadStoredConversations,
+  saveStoredConversations,
+} from "@/lib/conversation-store";
 import type { AskResponse } from "@/types/api";
 
 type StatusKey = "idle" | "loading" | "error";
-type UiError = {
-  code: string;
-  message: string;
-  retryable: boolean;
-  debugSql?: string;
-  retryAfterSeconds?: number | null;
+type ChatMessage = {
+  type: "user" | "assistant";
+  content: string;
+  /** The full answer. Only present for answers received in this session: results are not stored. */
+  result?: AskResponse;
+  /** True for text restored from the server after a reload. */
+  restored?: boolean;
 };
-type ChatMessage = { type: "user" | "assistant"; content: string };
 type ConversationThread = ConversationListItem & {
   messages: ChatMessage[];
-  result: AskResponse | null;
 };
+type KeyedError = UiError & { key: number };
 
 function createTitleFromQuestion(question: string) {
   const title = question.trim().replace(/\s+/g, " ");
@@ -32,23 +49,85 @@ function createTitleFromQuestion(question: string) {
 
 export function AnalyticsDashboard() {
   const submissionInProgress = useRef(false);
+  const errorCounter = useRef(0);
   const [draft, setDraft] = useState("");
   const [status, setStatus] = useState<StatusKey>("idle");
-  const [error, setError] = useState<UiError | null>(null);
+  const [error, setError] = useState<KeyedError | null>(null);
   const [lastFailedQuestion, setLastFailedQuestion] = useState<string | null>(null);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [threads, setThreads] = useState<ConversationThread[]>([]);
 
+  function showError(uiError: UiError | null) {
+    errorCounter.current += 1;
+    setError(uiError ? { ...uiError, key: errorCounter.current } : null);
+  }
+
+  // Restore the conversations this browser started, so a reload does not lose the thread. Only
+  // the text comes back: result rows are never stored server-side, so re-ask to refresh the data.
+  useEffect(() => {
+    let cancelled = false;
+
+    async function restore() {
+      const restored: ConversationThread[] = [];
+      for (const item of loadStoredConversations()) {
+        try {
+          const conversation = await getConversation(item.id);
+          const messages: ChatMessage[] = [];
+          for (const turn of conversation.turns) {
+            if (turn.role === "user" || turn.role === "assistant") {
+              messages.push({ type: turn.role, content: turn.content, restored: true });
+            }
+          }
+          restored.push({ id: item.id, title: item.title, messages });
+        } catch (restoreError) {
+          if (restoreError instanceof ApiError && restoreError.code === "UNAUTHENTICATED") {
+            if (!cancelled) {
+              errorCounter.current += 1;
+              setError({
+                code: restoreError.code,
+                message: restoreError.message,
+                retryable: false,
+                key: errorCounter.current,
+              });
+            }
+            return;
+          }
+          if (restoreError instanceof ApiError && restoreError.code === "CONVERSATION_NOT_FOUND") {
+            forgetConversation(item.id); // expired, deleted, or not ours
+          }
+          // Any other failure leaves the id remembered for the next load.
+        }
+      }
+      if (cancelled || !restored.length) return;
+      setThreads((previous) => {
+        const known = new Set(previous.map((thread) => thread.id));
+        return [...previous, ...restored.filter((thread) => !known.has(thread.id))];
+      });
+      setActiveConversationId((current) => current ?? restored[0].id);
+    }
+
+    void restore();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Remember the conversation list so the next load can restore it.
+  useEffect(() => {
+    if (threads.length) {
+      saveStoredConversations(threads.map(({ id, title }) => ({ id, title })));
+    }
+  }, [threads]);
+
   async function startConversation() {
     if (status === "loading") return;
-    setError(null);
+    showError(null);
     try {
       const newConversation = await createConversation();
       const thread: ConversationThread = {
         id: newConversation.conversation_id,
         title: "New conversation",
         messages: [],
-        result: null,
       };
       setThreads((previous) => [thread, ...previous]);
       setActiveConversationId(thread.id);
@@ -56,8 +135,22 @@ export function AnalyticsDashboard() {
       setLastFailedQuestion(null);
     } catch (requestError) {
       setStatus("error");
-      setError(toUiError(requestError, "Could not start a conversation."));
+      showError(toUiError(requestError, "Could not start a conversation."));
     }
+  }
+
+  async function removeConversation(id: string) {
+    if (status === "loading") return;
+    try {
+      await deleteConversation(id);
+    } catch (requestError) {
+      showError(toUiError(requestError, "Could not delete the conversation."));
+      return;
+    }
+    forgetConversation(id);
+    setThreads((previous) => previous.filter((thread) => thread.id !== id));
+    setActiveConversationId((current) => (current === id ? null : current));
+    showError(null);
   }
 
   async function submitQuestion(questionOverride?: string, isRetry = false) {
@@ -69,7 +162,7 @@ export function AnalyticsDashboard() {
 
     submissionInProgress.current = true;
     setStatus("loading");
-    setError(null);
+    showError(null);
 
     try {
       let thread = threads.find((item) => item.id === activeConversationId);
@@ -79,44 +172,59 @@ export function AnalyticsDashboard() {
           id: newConversation.conversation_id,
           title: createTitleFromQuestion(question),
           messages: [],
-          result: null,
         };
         setActiveConversationId(thread.id);
       }
 
       const threadId = thread.id;
-      const updatedThread = { ...thread, title: thread.messages.length ? thread.title : createTitleFromQuestion(question) };
+      const title = thread.messages.length ? thread.title : createTitleFromQuestion(question);
       // A retry normally finds its question already recorded; if the first attempt failed before
       // the thread existed (for example a 401 while creating it), the question still has to be added.
       const lastMessage = thread.messages[thread.messages.length - 1];
       const alreadyRecorded = isRetry && lastMessage?.type === "user" && lastMessage.content === question;
       if (!alreadyRecorded) {
+        const userMessage: ChatMessage = { type: "user", content: question };
         setThreads((previous) => {
           const exists = previous.some((item) => item.id === threadId);
           return exists
             ? previous.map((item) => item.id === threadId
-              ? { ...updatedThread, messages: [...item.messages, { type: "user", content: question }], result: null }
+              ? { ...item, title, messages: [...item.messages, userMessage] }
               : item)
-            : [{ ...updatedThread, messages: [{ type: "user", content: question }] }, ...previous];
+            : [{ id: threadId, title, messages: [userMessage] }, ...previous];
         });
         setDraft("");
       }
       const result = await askQuestion({ question, conversation_id: threadId });
+      const assistantMessage: ChatMessage = {
+        type: "assistant",
+        content: result.summary ?? result.explanation,
+        result,
+      };
       setThreads((previous) => previous.map((item) => item.id === threadId
-        ? { ...item, messages: [...item.messages, { type: "assistant", content: result.summary ?? result.explanation }], result }
+        ? { ...item, messages: [...item.messages, assistantMessage] }
         : item));
       setStatus("idle");
       setLastFailedQuestion(null);
     } catch (requestError) {
       setStatus("error");
-      setError(toUiError(requestError, "Request failed."));
+      showError(toUiError(requestError, "Request failed."));
       setLastFailedQuestion(question);
     } finally {
       submissionInProgress.current = false;
     }
   }
 
+  async function sendFeedback(result: AskResponse, helpful: boolean) {
+    if (!result.request_id) return;
+    await submitFeedback({
+      request_id: result.request_id,
+      helpful,
+      conversation_id: activeConversationId,
+    });
+  }
+
   const activeThread = threads.find((thread) => thread.id === activeConversationId) ?? null;
+  const special = error?.code === "UNAUTHENTICATED" || error?.code === "QUERY_GENERATION_FAILED";
 
   return (
     <div className="min-h-screen bg-[#f2f6f6] text-slate-900 md:flex">
@@ -126,9 +234,10 @@ export function AnalyticsDashboard() {
         onCreateConversation={startConversation}
         onSelectConversation={(id) => {
           setActiveConversationId(id);
-          setError(null);
+          showError(null);
           setStatus("idle");
         }}
+        onDeleteConversation={removeConversation}
         busy={status === "loading"}
       />
 
@@ -154,7 +263,7 @@ export function AnalyticsDashboard() {
             <SignInRequired
               onSubmit={(token) => {
                 setAuthToken(token);
-                setError(null);
+                showError(null);
                 if (lastFailedQuestion) {
                   void submitQuestion(lastFailedQuestion, true);
                 } else {
@@ -168,49 +277,45 @@ export function AnalyticsDashboard() {
             <GenerationFailed message={error.message} debugSql={error.debugSql} />
           )}
 
-          {error && error.code !== "UNAUTHENTICATED" && error.code !== "QUERY_GENERATION_FAILED" && (
-            <div role="alert" className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-              <TriangleAlert className="mt-0.5 size-4 shrink-0" />
-              <div className="flex flex-1 flex-wrap items-center justify-between gap-3">
-                <span>
-                  <strong className="mr-2 font-semibold">{error.code}</strong>
-                  {error.message}
-                  {error.retryAfterSeconds ? ` Try again in ${error.retryAfterSeconds}s.` : ""}
-                </span>
-                {error.retryable && lastFailedQuestion && (
-                  <button
-                    type="button"
-                    onClick={() => submitQuestion(lastFailedQuestion, true)}
-                    disabled={status === "loading"}
-                    className="rounded-md border border-red-300 px-3 py-1.5 text-xs font-semibold text-red-800 hover:bg-red-100 disabled:opacity-50"
-                  >
-                    Retry
-                  </button>
-                )}
-              </div>
-            </div>
+          {error && !special && (
+            <ErrorNotice
+              key={error.key}
+              error={error}
+              onRetry={lastFailedQuestion ? () => submitQuestion(lastFailedQuestion, true) : undefined}
+              retryDisabled={status === "loading"}
+            />
           )}
 
           {activeThread?.messages.length ? (
-            <section aria-label="Conversation" className="space-y-3">
+            <section aria-label="Conversation" className="space-y-5">
               {activeThread.messages.map((message, index) => (
-                <div key={`${activeThread.id}-${index}`} className={`flex ${message.type === "user" ? "justify-end" : "justify-start"}`}>
-                  <p className={`max-w-[min(90%,760px)] rounded-lg px-4 py-3 text-sm leading-6 ${
-                    message.type === "user" ? "bg-[#173344] text-white" : "border border-slate-200 bg-white text-slate-700"
-                  }`}>
-                    {message.content}
-                  </p>
+                <div key={`${activeThread.id}-${index}`} className="space-y-4">
+                  <div className={`flex ${message.type === "user" ? "justify-end" : "justify-start"}`}>
+                    <p className={`max-w-[min(90%,760px)] rounded-lg px-4 py-3 text-sm leading-6 ${
+                      message.type === "user" ? "bg-[#173344] text-white" : "border border-slate-200 bg-white text-slate-700"
+                    }`}>
+                      {message.content}
+                    </p>
+                  </div>
+                  {message.result && (
+                    <AnalyticsResults
+                      result={message.result}
+                      onFeedback={message.result.request_id
+                        ? (helpful) => sendFeedback(message.result as AskResponse, helpful)
+                        : undefined}
+                    />
+                  )}
+                  {message.restored && message.type === "assistant" && (
+                    <p className="text-xs text-slate-400">
+                      The data for this answer is not stored. Ask the question again to refresh it.
+                    </p>
+                  )}
                 </div>
               ))}
             </section>
           ) : (
-            <section aria-label="No analytics results" className="flex min-h-56 items-center gap-4 border-y border-slate-200 py-8 text-slate-500">
-              <BarChart3 className="size-5 text-cyan-700" />
-              <p className="text-sm">No results selected</p>
-            </section>
+            <ExamplesPanel onPick={setDraft} disabled={status === "loading"} />
           )}
-
-          {activeThread?.result && <AnalyticsResults result={activeThread.result} />}
         </div>
       </main>
     </div>
@@ -223,6 +328,7 @@ function toUiError(error: unknown, fallback: string): UiError {
       code: error.code,
       message: error.message,
       retryable: error.retryable,
+      requestId: error.requestId,
       debugSql: error.debug?.sql,
       retryAfterSeconds: error.retryAfterSeconds,
     };

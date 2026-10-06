@@ -6,6 +6,7 @@ import re
 import time
 from collections import defaultdict, deque
 from threading import Lock
+from typing import Protocol
 from uuid import uuid4
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -106,6 +107,14 @@ class RequestSizeLimitMiddleware:
         await send(start)
         for message in body:
             await send(message)
+
+
+class RateLimiter(Protocol):
+    """What the rate-limit dependency needs from a counter store."""
+
+    def check(
+        self, key: str, now: float | None = None, limit: int | None = None
+    ) -> tuple[bool, int]: ...
 
 
 class SlidingWindowRateLimiter:

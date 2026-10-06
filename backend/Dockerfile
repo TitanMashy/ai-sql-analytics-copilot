@@ -8,11 +8,17 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY pyproject.toml ./
+# requirements.lock is optional until `make lock` has been run and committed (the [k] glob lets the
+# COPY succeed without it); once it exists the image installs exactly the locked, hash-verified set.
+COPY pyproject.toml requirements.loc[k] ./
 COPY app ./app
 COPY alembic.ini ./alembic.ini
 COPY alembic ./alembic
-RUN pip install . \
+RUN if [ -f requirements.lock ]; then \
+        pip install --require-hashes -r requirements.lock && pip install --no-deps . ; \
+    else \
+        pip install . ; \
+    fi \
 	&& groupadd --system app \
 	&& useradd --system --gid app --home-dir /app --shell /usr/sbin/nologin app \
 	&& chown -R app:app /app

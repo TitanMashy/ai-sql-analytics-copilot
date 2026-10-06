@@ -1,7 +1,31 @@
 "use client";
 
-import { FormEvent, useState } from "react";
-import { KeyRound, MessageCircleQuestion } from "lucide-react";
+import { FormEvent, useEffect, useState } from "react";
+import { Clock, KeyRound, MessageCircleQuestion, TriangleAlert } from "lucide-react";
+
+export interface UiError {
+  code: string;
+  message: string;
+  retryable: boolean;
+  requestId?: string | null;
+  debugSql?: string;
+  retryAfterSeconds?: number | null;
+}
+
+/** Counts down from `seconds` to zero, one tick per second. */
+export function useCountdown(seconds: number | null | undefined): number {
+  const [remaining, setRemaining] = useState(Math.max(0, Math.ceil(seconds ?? 0)));
+
+  useEffect(() => {
+    if (remaining <= 0) return;
+    const timer = window.setInterval(() => {
+      setRemaining((current) => Math.max(0, current - 1));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [remaining]);
+
+  return remaining;
+}
 
 interface SignInRequiredProps {
   onSubmit: (token: string) => void;
@@ -83,5 +107,50 @@ export function GenerationFailed({ message, debugSql }: GenerationFailedProps) {
         </div>
       </div>
     </section>
+  );
+}
+
+interface ErrorNoticeProps {
+  error: UiError;
+  onRetry?: () => void;
+  retryDisabled?: boolean;
+}
+
+const TIMEOUT_CODES = new Set(["REQUEST_DEADLINE_EXCEEDED", "REQUEST_TIMEOUT", "LLM_TIMEOUT"]);
+
+/**
+ * The generic failure banner, with distinct treatment for the two cases a user can act on:
+ * a rate limit (wait for the countdown, then retry) and a timeout (ask something narrower).
+ */
+export function ErrorNotice({ error, onRetry, retryDisabled = false }: ErrorNoticeProps) {
+  const rateLimited = error.code === "RATE_LIMIT_EXCEEDED";
+  const timedOut = TIMEOUT_CODES.has(error.code);
+  const remaining = useCountdown(rateLimited ? error.retryAfterSeconds : 0);
+  const waiting = rateLimited && remaining > 0;
+  const Icon = rateLimited || timedOut ? Clock : TriangleAlert;
+
+  return (
+    <div role="alert" className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+      <Icon className="mt-0.5 size-4 shrink-0" />
+      <div className="flex flex-1 flex-wrap items-center justify-between gap-3">
+        <span>
+          <strong className="mr-2 font-semibold">{error.code}</strong>
+          {error.message}
+          {waiting ? ` Try again in ${remaining}s.` : ""}
+          {timedOut ? " Try a narrower question, such as a shorter date range or a top-N." : ""}
+          {error.requestId ? <span className="ml-2 text-xs text-red-600">Reference: {error.requestId}</span> : null}
+        </span>
+        {error.retryable && onRetry && (
+          <button
+            type="button"
+            onClick={onRetry}
+            disabled={retryDisabled || waiting}
+            className="rounded-md border border-red-300 px-3 py-1.5 text-xs font-semibold text-red-800 hover:bg-red-100 disabled:opacity-50"
+          >
+            Retry
+          </button>
+        )}
+      </div>
+    </div>
   );
 }

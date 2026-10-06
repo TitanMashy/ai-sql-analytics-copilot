@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from sqlglot import exp, parse
-from sqlglot.errors import ParseError
+from sqlglot.errors import SqlglotError
 
 from app.db.analytics_surface import ANALYTICS_SCHEMA, PII_COLUMNS
 from app.db.schema_metadata import get_schema_metadata
@@ -139,6 +139,21 @@ class SQLValidator:
         }
 
     def validate(self, sql: str) -> ValidationResult:
+        try:
+            return self._validate(sql)
+        except RecursionError:
+            # Parsing can succeed on deeply nested input that is too deep to walk or regenerate.
+            return ValidationResult(
+                False,
+                None,
+                ["SQL is too deeply nested."],
+                [],
+                [],
+                QueryComplexity(0, 0, 0, "high"),
+                error_code="QUERY_COMPLEXITY_ERROR",
+            )
+
+    def _validate(self, sql: str) -> ValidationResult:
         empty_complexity = QueryComplexity(0, 0, 0, "low")
         if not sql.strip():
             return ValidationResult(
@@ -152,7 +167,9 @@ class SQLValidator:
 
         try:
             statements = parse(sql, read="postgres")
-        except ParseError:
+        except (SqlglotError, RecursionError):
+            # ParseError, TokenError (unterminated strings, stray characters), and pathologically
+            # nested input all mean "this is not SQL we will run".
             logger.info("analytics SQL parse failed")
             return ValidationResult(
                 False,
@@ -165,6 +182,17 @@ class SQLValidator:
                 repairable=True,
             )
 
+        # ``;;`` and a trailing ``;`` yield empty entries; they are not statements.
+        statements = [statement for statement in statements if statement is not None]
+        if not statements:
+            return ValidationResult(
+                False,
+                None,
+                ["SQL query cannot be empty."],
+                [],
+                [],
+                empty_complexity,
+            )
         if len(statements) != 1:
             return ValidationResult(
                 False,

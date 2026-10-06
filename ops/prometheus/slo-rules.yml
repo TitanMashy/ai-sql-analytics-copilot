@@ -1,0 +1,72 @@
+# Recording rules for the service level indicators defined in docs/slos.md.
+# Load with `rule_files:` in prometheus.yml (see prometheus.yml next to this file).
+groups:
+  - name: analytics-slis
+    interval: 30s
+    rules:
+      # /ask requests per second by outcome class.
+      - record: analytics:ask_requests:rate5m
+        expr: |
+          sum by (status) (
+            rate(analytics_http_requests_total{route="/api/v1/analytics/ask", method="POST"}[5m])
+          )
+
+      # SLI 1 - availability: share of /ask requests that did not fail on the server side.
+      # 4xx are client or content outcomes (validation, rate limit, "could not answer") and do not
+      # count against availability; 5xx and 504 deadline responses do.
+      - record: analytics:ask_availability:ratio_rate5m
+        expr: |
+          1 - (
+            sum(rate(analytics_http_requests_total{route="/api/v1/analytics/ask", method="POST", status=~"5.."}[5m]))
+            /
+            clamp_min(sum(rate(analytics_http_requests_total{route="/api/v1/analytics/ask", method="POST"}[5m])), 1e-9)
+          )
+
+      - record: analytics:ask_availability:ratio_rate1h
+        expr: |
+          1 - (
+            sum(rate(analytics_http_requests_total{route="/api/v1/analytics/ask", method="POST", status=~"5.."}[1h]))
+            /
+            clamp_min(sum(rate(analytics_http_requests_total{route="/api/v1/analytics/ask", method="POST"}[1h])), 1e-9)
+          )
+
+      # SLI 2 - latency: p95 /ask duration, including the LLM call and any repair attempts.
+      - record: analytics:ask_latency_seconds:p95_5m
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (
+              rate(analytics_http_request_duration_seconds_bucket{route="/api/v1/analytics/ask", method="POST"}[5m])
+            )
+          )
+
+      # SLI 3 - answer rate: share of /ask requests that were not refused with 422. A 422 after the
+      # repair loop (QUERY_GENERATION_FAILED) means the validator or the model failed to produce
+      # an acceptable query; a high ratio on healthy traffic is the practical signal of validator
+      # false rejections. Malformed requests also return 422 but are rare from the dashboard.
+      - record: analytics:ask_answer_rate:ratio_rate1h
+        expr: |
+          1 - (
+            sum(rate(analytics_http_requests_total{route="/api/v1/analytics/ask", method="POST", status="422"}[1h]))
+            /
+            clamp_min(sum(rate(analytics_http_requests_total{route="/api/v1/analytics/ask", method="POST"}[1h])), 1e-9)
+          )
+
+      # Supporting ratios used by alerts and the dashboard.
+      - record: analytics:llm_error_ratio:rate5m
+        expr: |
+          sum(rate(analytics_llm_errors_total[5m]))
+          /
+          clamp_min(sum(rate(analytics_llm_call_duration_seconds_count[5m])), 1e-9)
+
+      - record: analytics:repair_success_ratio:rate1h
+        expr: |
+          sum(rate(analytics_sql_repair_successes_total[1h]))
+          /
+          clamp_min(sum(rate(analytics_sql_repair_attempts_total[1h])), 1e-9)
+
+      - record: analytics:sql_cache_hit_ratio:rate1h
+        expr: |
+          sum(rate(analytics_sql_cache_requests_total{result="hit"}[1h]))
+          /
+          clamp_min(sum(rate(analytics_sql_cache_requests_total[1h])), 1e-9)

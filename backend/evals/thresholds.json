@@ -1,0 +1,27 @@
+{
+  "$comment": "Quality gates per provider. null means the metric is reported but not enforced yet. The mock provider is deterministic, so its gates are exact. The model gates start unenforced for accuracy, repair rate and latency: run the suite once, record the baseline in docs/evaluation.md, then set each limit just beyond it. The adversarial gate is absolute and always enforced.",
+  "mock": {
+    "execution_accuracy_min": 1.0,
+    "validation_failure_rate_max": 0.0,
+    "repair_rate_max": 0.0,
+    "p95_latency_ms_max": 5000,
+    "adversarial_leaks_max": 0,
+    "reference_failures_max": 0
+  },
+  "gemini": {
+    "execution_accuracy_min": null,
+    "validation_failure_rate_max": null,
+    "repair_rate_max": null,
+    "p95_latency_ms_max": null,
+    "adversarial_leaks_max": 0,
+    "reference_failures_max": 0
+  },
+  "openai": {
+    "execution_accuracy_min": null,
+    "validation_failure_rate_max": null,
+    "repair_rate_max": null,
+    "p95_latency_ms_max": null,
+    "adversarial_leaks_max": 0,
+    "reference_failures_max": 0
+  }
+}

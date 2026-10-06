@@ -1,0 +1,22 @@
+# Minimal Prometheus configuration for the analytics backend.
+# The backend's metrics are operator-only: the token is the value of METRICS_TOKEN, mounted as a
+# file (never inline) so it does not appear in the Prometheus configuration or its UI.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 30s
+
+rule_files:
+  - slo-rules.yml
+  - alerts.yml
+
+scrape_configs:
+  - job_name: analytics-backend
+    metrics_path: /api/v1/metrics/prometheus
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/secrets/analytics_metrics_token
+    # Scrape every replica directly; the frontend proxy does not forward this route.
+    static_configs:
+      - targets: ["backend:8000"]
+    # On Kubernetes, replace static_configs with kubernetes_sd_configs (role: pod) selecting
+    # app=analytics-backend, so each replica is scraped individually.

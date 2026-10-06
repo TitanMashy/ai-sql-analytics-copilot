@@ -1,0 +1,20 @@
+# Load-test overrides. Use with the base file:
+#   docker compose -f docker-compose.yml -f docker-compose.loadtest.yml up -d --build
+#   docker compose --profile demo run --rm seed
+#   k6 run -e BASE_URL=http://localhost:8000 loadtest/ask.js
+#
+# The stack uses the mock provider with a simulated model latency, no rate limiting (otherwise the
+# test measures the limiter), and publishes the backend on 127.0.0.1 so k6 can reach it directly.
+# Never use this file on a shared or production host.
+services:
+  backend:
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      LLM_MODE: mock
+      RATE_LIMIT_ENABLED: "false"
+      # A typical Gemini Flash round trip. Replace with the p50/p95 you measured in production
+      # (analytics_llm_call_duration_seconds) to make the simulation recorded rather than assumed.
+      MOCK_LLM_LATENCY_MS: ${MOCK_LLM_LATENCY_MS:-800}
+      MOCK_LLM_JITTER_MS: ${MOCK_LLM_JITTER_MS:-400}
+      REQUEST_DEADLINE_SECONDS: "25"

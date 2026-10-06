@@ -1,3 +1,4 @@
+import contextvars
 import logging
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -7,17 +8,19 @@ from functools import partial
 from time import perf_counter
 
 from app.analytics.service import AnalyticsQueryService, AnalyticsServiceError, QueryResult
-from app.conversation.service import ConversationMemory, get_conversation_memory
+from app.conversation.service import ConversationStore, get_conversation_memory
 from app.core.auth import Principal
 from app.core.deadline import Deadline
 from app.core.metrics import metrics
 from app.core.telemetry import get_request_telemetry
+from app.core.tracing import record_span_error, span
 from app.llm.prompt import SQLPromptBuilder
 from app.llm.provider import LLMGeneration, LLMProvider, LLMProviderError
 from app.services.result_analyzer import AnalyticsResultAnalyzer
 from app.services.result_models import ResultAnalysis
 from app.services.result_summary import ResultSummaryService
 from app.services.schema_retriever import SchemaContext, SchemaRetriever
+from app.services.sql_cache import CachedSql, SqlCache
 from app.services.visualization import VisualizationSelector
 
 logger = logging.getLogger(__name__)
@@ -65,8 +68,10 @@ class SQLGenerationService:
         result_analyzer: AnalyticsResultAnalyzer | None = None,
         visualization_selector: VisualizationSelector | None = None,
         summary_service: ResultSummaryService | None = None,
-        conversation_memory: ConversationMemory | None = None,
+        conversation_memory: ConversationStore | None = None,
         request_deadline_seconds: float | None = None,
+        sql_cache: SqlCache | None = None,
+        schema_version: str = "",
     ) -> None:
         self.provider = provider
         self.retriever = retriever or SchemaRetriever()
@@ -78,6 +83,8 @@ class SQLGenerationService:
         self.summary_service = summary_service or ResultSummaryService()
         self.conversation_memory = conversation_memory or get_conversation_memory()
         self.request_deadline_seconds = request_deadline_seconds
+        self.sql_cache = sql_cache
+        self.schema_version = schema_version
 
     def generate(
         self,
@@ -106,7 +113,11 @@ class SQLGenerationService:
         context, resolved_context = self._prepare(
             question, conversation_context, conversation_id, principal
         )
-        generated = self._generate(question, context, resolved_context, deadline)
+        cache_key = self._cache_key(question, resolved_context, principal)
+        generated = self._cached_query(cache_key, question, context)
+        from_cache = generated is not None
+        if generated is None:
+            generated = self._generate(question, context, resolved_context, deadline)
         telemetry = get_request_telemetry()
         repair_attempts = 0
         while True:
@@ -140,6 +151,17 @@ class SQLGenerationService:
                 summary = self.summary_service.summarize(
                     question, generated.sql, result.columns, result.rows, analysis
                 )
+                if cache_key is not None and self.sql_cache is not None:
+                    self.sql_cache.put(
+                        cache_key,
+                        CachedSql(
+                            sql=generated.sql,
+                            explanation=generated.explanation,
+                            tables_used=tuple(generated.tables_used),
+                            confidence=generated.confidence,
+                            provider=generated.provider,
+                        ),
+                    )
                 if conversation_id:
                     self._remember(conversation_id, question, generated, summary, principal)
                 if repair_attempts:
@@ -155,6 +177,11 @@ class SQLGenerationService:
                     summary=summary,
                 )
             except AnalyticsServiceError as error:
+                if from_cache and cache_key is not None and self.sql_cache is not None:
+                    # Never replay cached SQL that just failed; a repair or a fresh answer
+                    # replaces it.
+                    self.sql_cache.discard(cache_key)
+                    from_cache = False
                 if not error.repairable:
                     raise
                 if repair_attempts >= self.max_repair_retries:
@@ -179,6 +206,40 @@ class SQLGenerationService:
                 )
                 repaired = self._call_provider(repair_call, deadline)
                 generated = self._to_generated_query(question, context, repaired)
+
+    # -- prompt-to-SQL cache -----------------------------------------------------------------
+
+    def _cache_key(
+        self, question: str, resolved_context: str | None, principal: Principal | None
+    ) -> tuple[str, str, str] | None:
+        """A cache key for standalone questions only (follow-ups depend on their context)."""
+        if self.sql_cache is None:
+            return None
+        if resolved_context and resolved_context != "No prior conversation context.":
+            return None
+        return self.sql_cache.key(question, self.schema_version, principal)
+
+    def _cached_query(
+        self,
+        cache_key: tuple[str, str, str] | None,
+        question: str,
+        context: SchemaContext,
+    ) -> GeneratedQuery | None:
+        if cache_key is None or self.sql_cache is None:
+            return None
+        cached = self.sql_cache.get(cache_key)
+        metrics.record_cache(cached is not None)
+        if cached is None:
+            return None
+        return GeneratedQuery(
+            question=question,
+            sql=cached.sql,
+            explanation=cached.explanation,
+            tables_used=list(cached.tables_used),
+            schema_context=context.table_names,
+            provider=cached.provider,
+            confidence=cached.confidence,
+        )
 
     # -- pipeline steps ---------------------------------------------------------------------
 
@@ -240,6 +301,7 @@ class SQLGenerationService:
 
     @staticmethod
     def _deadline_error() -> AnalyticsServiceError:
+        metrics.increment("deadline_exceeded_total")
         return AnalyticsServiceError("REQUEST_DEADLINE_EXCEEDED", DEADLINE_MESSAGE, 504)
 
     @staticmethod
@@ -257,26 +319,43 @@ class SQLGenerationService:
         self, operation: Callable[[], LLMGeneration], deadline: Deadline
     ) -> LLMGeneration:
         started_at = perf_counter()
-        try:
-            self._check_deadline(deadline)
-            future = _provider_executor.submit(operation)
+        error_code: str | None = None
+        telemetry = get_request_telemetry()
+        with span(
+            "llm.call",
+            provider=self.provider.name,
+            request_id=telemetry.request_id if telemetry else None,
+        ) as current:
             try:
-                return future.result(timeout=deadline.remaining())
-            except FutureTimeoutError:
-                if future.done():
-                    raise  # the provider itself raised TimeoutError
-                future.cancel()
-                raise self._deadline_error() from None
-        except LLMProviderError:
-            if self.provider.name == "gemini":
-                metrics.increment("gemini_failures_total")
-            raise
-        finally:
-            elapsed_ms = (perf_counter() - started_at) * 1000
-            metrics.observe("llm_latency_ms", elapsed_ms)
-            telemetry = get_request_telemetry()
-            if telemetry:
-                telemetry.llm_latency_ms += elapsed_ms
+                self._check_deadline(deadline)
+                # Run in a copy of this context so the worker sees the same request telemetry.
+                future = _provider_executor.submit(contextvars.copy_context().run, operation)
+                try:
+                    return future.result(timeout=deadline.remaining())
+                except FutureTimeoutError:
+                    if future.done():
+                        raise  # the provider itself raised TimeoutError
+                    future.cancel()
+                    raise self._deadline_error() from None
+            except LLMProviderError as error:
+                error_code = error.code
+                if self.provider.name == "gemini":
+                    metrics.increment("gemini_failures_total")
+                raise
+            except AnalyticsServiceError as error:
+                error_code = error.code
+                raise
+            except Exception:
+                error_code = "UNEXPECTED_PROVIDER_ERROR"
+                raise
+            finally:
+                elapsed = perf_counter() - started_at
+                metrics.observe("llm_latency_ms", elapsed * 1000)
+                metrics.record_llm_call(self.provider.name, elapsed, error_code)
+                if error_code:
+                    record_span_error(current, error_code)
+                if telemetry:
+                    telemetry.llm_latency_ms += elapsed * 1000
 
     def _resolve_context(
         self,

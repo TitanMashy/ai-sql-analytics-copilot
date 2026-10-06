@@ -334,7 +334,20 @@ def generate_seed_rows(seed: int = SEED_RANDOM) -> dict[type[Any], list[dict[str
     }
 
 
+class ProductionSeedError(RuntimeError):
+    """The demo dataset must never be loaded into a production database."""
+
+
+def _refuse_in_production() -> None:
+    if get_settings().is_production:
+        raise ProductionSeedError(
+            "Refusing to load demo data: APP_ENV=production. The seed is synthetic fleet data "
+            "for development, CI, and evaluation only."
+        )
+
+
 def seed_database(session: Session, seed: int = SEED_RANDOM) -> bool:
+    _refuse_in_production()
     if session.scalar(select(SeedRun).where(SeedRun.seed_name == SEED_NAME)) is not None:
         return False
     session.rollback()
@@ -383,7 +396,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Seed the deterministic SaaS fleet dataset")
     parser.add_argument("--seed", type=int, default=SEED_RANDOM)
     args = parser.parse_args()
-    get_settings()
+    try:
+        _refuse_in_production()
+    except ProductionSeedError as error:
+        raise SystemExit(str(error)) from None
     with SessionLocal() as session:
         seeded = seed_database(session, seed=args.seed)
     print("seeded" if seeded else "already seeded")

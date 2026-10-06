@@ -12,6 +12,7 @@ export function buildMockAskResponse(question: string): AskResponse {
       schema_context: ["vehicles"],
       provider: "mock",
       confidence: 0.96,
+      request_id: "req-mock-1",
       columns: ["active_vehicle_count"],
       rows: [{ active_vehicle_count: 128 }],
       row_count: 1,
@@ -42,6 +43,7 @@ export function buildMockAskResponse(question: string): AskResponse {
       schema_context: ["customers", "invoices"],
       provider: "mock",
       confidence: 0.95,
+      request_id: "req-mock-2",
       columns: ["customer_name", "revenue"],
       rows: [
         { customer_name: "Northstar Logistics", revenue: 1835000 },
@@ -76,6 +78,7 @@ export function buildMockAskResponse(question: string): AskResponse {
     schema_context: ["trips"],
     provider: "mock",
     confidence: 0.89,
+    request_id: "req-mock-3",
     columns: ["month", "revenue"],
     rows: [
       { month: "2025-05", revenue: 820000 },

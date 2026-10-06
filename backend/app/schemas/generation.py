@@ -46,6 +46,7 @@ class GeneratedQueryResponse(BaseModel):
 
 
 class AskResponse(GeneratedQueryResponse):
+    request_id: str | None = None
     columns: list[str]
     rows: list[dict[str, Any]]
     row_count: int

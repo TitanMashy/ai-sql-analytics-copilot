@@ -5,6 +5,7 @@ from sqlalchemy import engine_from_config, pool
 from alembic import context
 from app.core.config import get_settings
 from app.db.base import Base
+from app.db.operational import OperationalBase
 from app.models import entities  # noqa: F401
 
 config = context.config
@@ -14,7 +15,8 @@ config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-target_metadata = Base.metadata
+# Fleet tables and operational tables (conversations, audit log) are migrated together.
+target_metadata = [Base.metadata, OperationalBase.metadata]
 
 
 def run_migrations_offline() -> None:

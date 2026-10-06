@@ -1,5 +1,8 @@
+from time import perf_counter
+
 from fastapi import APIRouter, Depends, Request
 
+from app.core.audit import AuditEvent, get_audit_service, hash_sql
 from app.core.auth import Principal, get_principal
 from app.core.rate_limit import enforce_rate_limit
 from app.schemas.analytics import ErrorResponse
@@ -82,17 +85,51 @@ def ask_analytics(
     service: SQLGenerationService = Depends(get_sql_generation_service),  # noqa: B008
     principal: Principal = Depends(get_principal),  # noqa: B008
 ) -> AskResponse:
-    result = service.ask(
-        payload.question,
-        request_id=request.state.request_id,
-        conversation_context=payload.conversation_context,
-        conversation_id=payload.conversation_id,
-        principal=principal,
+    request_id = request.state.request_id
+    audit = get_audit_service()
+    started_at = perf_counter()
+    try:
+        result = service.ask(
+            payload.question,
+            request_id=request_id,
+            conversation_context=payload.conversation_context,
+            conversation_id=payload.conversation_id,
+            principal=principal,
+        )
+    except Exception as error:
+        # Every /ask is audited, including failures; only the stable error code is recorded.
+        audit.record(
+            AuditEvent(
+                event="ask",
+                outcome="error",
+                request_id=request_id,
+                principal=principal.user_id,
+                customer_id=principal.customer_id,
+                conversation_id=payload.conversation_id,
+                duration_ms=(perf_counter() - started_at) * 1000,
+                error_code=getattr(error, "code", "INTERNAL_ERROR"),
+            )
+        )
+        raise
+    audit.record(
+        AuditEvent(
+            event="ask",
+            outcome="success",
+            request_id=request_id,
+            principal=principal.user_id,
+            customer_id=principal.customer_id,
+            conversation_id=payload.conversation_id,
+            sql_hash=hash_sql(result.generated.sql),
+            tables=tuple(result.generated.tables_used),
+            row_count=result.result.row_count,
+            duration_ms=(perf_counter() - started_at) * 1000,
+        )
     )
     kpi = result.analysis.kpi
     visualization = result.analysis.visualization
     return AskResponse(
         **result.generated.__dict__,
+        request_id=request_id,
         columns=result.result.columns,
         rows=result.result.rows,
         row_count=result.result.row_count,

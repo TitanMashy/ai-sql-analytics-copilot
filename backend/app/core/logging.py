@@ -26,6 +26,15 @@ class StructuredFormatter(logging.Formatter):
             "provider_status_code",
             "error_type",
             "status_code",
+            "event",
+            "outcome",
+            "principal",
+            "customer_id",
+            "sql_hash",
+            "tables",
+            "duration_ms",
+            "helpful",
+            "error_code",
         ):
             if hasattr(record, field):
                 payload[field] = getattr(record, field)

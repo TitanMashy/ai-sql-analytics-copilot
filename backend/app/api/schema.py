@@ -3,6 +3,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from app.core.auth import get_principal
 from app.core.rate_limit import enforce_rate_limit
 from app.db.schema_metadata import TableMetadata, get_schema_metadata
+from app.services.business_definitions import BUSINESS_DEFINITIONS
+from app.schemas.feedback import BusinessDefinitionResponse, BusinessDefinitionsResponse
 from app.schemas.schema import (
     ColumnMetadataResponse,
     RelationshipMetadataResponse,
@@ -68,3 +70,30 @@ def get_table(table_name: str) -> TableMetadataResponse:
     if table is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Table not found")
     return _to_response(table)
+
+
+EXAMPLE_QUESTIONS = [
+    "How many active vehicles do we have?",
+    "What were the top 10 customers by revenue?",
+    "Show monthly revenue for the last 12 months.",
+    "Which vehicles had the highest idle time?",
+    "Show fuel consumption by vehicle.",
+    "What is our total maintenance cost by vehicle type?",
+    "How many invoices are overdue?",
+]
+
+
+@router.get(
+    "/business-definitions",
+    response_model=BusinessDefinitionsResponse,
+    summary="Metric definitions and example questions",
+    description="How the analytics layer defines revenue, active vehicles, and other metrics.",
+)
+def get_business_definitions() -> BusinessDefinitionsResponse:
+    return BusinessDefinitionsResponse(
+        definitions=[
+            BusinessDefinitionResponse(name=item.name, definition=item.definition)
+            for item in BUSINESS_DEFINITIONS
+        ],
+        examples=EXAMPLE_QUESTIONS,
+    )

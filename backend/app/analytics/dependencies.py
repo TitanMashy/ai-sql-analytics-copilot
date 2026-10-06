@@ -14,4 +14,5 @@ def get_analytics_query_service() -> AnalyticsQueryService:
         query_timeout_seconds=settings.query_timeout_seconds,
         max_query_joins=settings.max_query_joins,
         max_query_nesting=settings.max_query_nesting,
+        query_cost_limit=settings.query_cost_limit,
     )
