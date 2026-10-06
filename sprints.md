@@ -7,6 +7,8 @@ Sprints 1–10 (see [progress.md](progress.md)) delivered a working, production-
 
 Each requirement has an ID, a description, and acceptance criteria (AC). A sprint is done only when every AC and the sprint's Definition of Done are met.
 
+> **Sprint 12 status.** Implemented in code, docs, CI, and ops files but not executed; evidence items (baselines, drills, lockfile) need a real environment.
+>
 > **Implementation status.** Sprint 11 has been implemented in the codebase but **not yet executed**: no tests, linters, builds, migrations, or application runs were performed when it was written. Treat every Sprint 11 acceptance criterion as unverified until the backend suite (`make test`, `make lint`), the frontend suite, and the PostgreSQL integration tests (`tests/test_readonly_permissions.py`) pass. Deviations from the text below: tenant scoping (S11-09) is enforced in the `analytics` views instead of RLS policies, because the view owner bypasses RLS and the role must not read base tables; the sprint's frontend sign-in (S11-05) is a paste-a-token prompt, since no identity provider exists.
 
 ## Production-ready definition

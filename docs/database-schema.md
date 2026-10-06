@@ -69,3 +69,15 @@ After starting PostgreSQL and applying the migration, run `make verify-permissio
 ## Schema Metadata
 
 `app.db.schema_metadata` exposes table names, descriptions, columns, types, and foreign-key relationships used by the schema retriever and SQL validator. Retrieval is deterministic and keyword-based; semantic embeddings and vector retrieval are future improvements.
+
+## Operational tables
+
+Three tables hold service state rather than fleet data. They are created by migration `c3d91e5a7b20`, declared on `OperationalBase` (not on the fleet `Base`), and are invisible to analytics: they are absent from `ALLOWED_TABLES`, from the prompt schema, and from the `analytics` views, and `analytics_readonly` has no privileges on them (`tests/test_conversation_postgres.py` proves it).
+
+| Table | Contents | Retention |
+|---|---|---|
+| `conversations` | id, owner (the principal's id), created and updated timestamps | idle longer than `CONVERSATION_TTL_DAYS` (default 30) |
+| `conversation_turns` | conversation id, role, content, and for assistant turns the SQL and tables used (never result rows); trimmed to `CONVERSATION_MAX_TURNS` | deleted with the conversation |
+| `audit_log` | timestamp, event (`ask` or `feedback`), request id, principal, customer id, conversation id, SQL hash, tables, row count, duration, outcome, error code, rating | `AUDIT_RETENTION_DAYS` (default 365) |
+
+`python -m app.jobs.purge` applies both retention periods. The audit table holds identifiers and a SHA-256 of the SQL only, so it can be retained and reviewed without becoming a second copy of user content.

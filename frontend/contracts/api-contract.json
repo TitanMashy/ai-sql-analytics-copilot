@@ -1,0 +1,31 @@
+{
+  "$comment": "Field names of the API responses the dashboard consumes. The backend test tests/test_api_contract.py and the frontend test types/contract.test.ts both compare against this file, so changing a response model on either side fails CI until this file and both sides agree.",
+  "AskResponse": [
+    "question",
+    "sql",
+    "explanation",
+    "tables_used",
+    "schema_context",
+    "provider",
+    "confidence",
+    "request_id",
+    "columns",
+    "rows",
+    "row_count",
+    "execution_time_ms",
+    "truncated",
+    "summary",
+    "kpi",
+    "visualization",
+    "warnings"
+  ],
+  "VisualizationResponse": ["type", "title", "x_axis", "y_axis", "series"],
+  "VisualizationAxisResponse": ["field", "format"],
+  "KPIResponse": ["label", "value", "format"],
+  "ConversationResponse": ["conversation_id", "turns", "context"],
+  "ConversationTurnResponse": ["conversation_id", "role", "content"],
+  "BusinessDefinitionsResponse": ["definitions", "examples"],
+  "BusinessDefinitionResponse": ["name", "definition"],
+  "FeedbackRequest": ["request_id", "helpful", "conversation_id"],
+  "ErrorBody": ["code", "message", "request_id", "debug"]
+}

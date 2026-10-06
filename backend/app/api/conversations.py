@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from app.conversation.service import (
     ConversationAccessError,
-    ConversationMemory,
+    ConversationStore,
     get_conversation_memory,
 )
 from app.core.auth import Principal, get_principal
@@ -34,7 +34,7 @@ _NOT_FOUND = "Conversation not found."
 )
 def create_conversation(
     request: Request,
-    memory: ConversationMemory = Depends(get_conversation_memory),  # noqa: B008
+    memory: ConversationStore = Depends(get_conversation_memory),  # noqa: B008
     principal: Principal = Depends(get_principal),  # noqa: B008
 ) -> ConversationResponse:
     conversation_id = str(uuid4())
@@ -51,7 +51,7 @@ def create_conversation(
 def get_conversation(
     request: Request,
     conversation_id: str,
-    memory: ConversationMemory = Depends(get_conversation_memory),  # noqa: B008
+    memory: ConversationStore = Depends(get_conversation_memory),  # noqa: B008
     principal: Principal = Depends(get_principal),  # noqa: B008
 ) -> ConversationResponse:
     request.state.conversation_id = conversation_id
@@ -82,7 +82,7 @@ def append_turn(
     request: Request,
     conversation_id: str,
     payload: ConversationTurnRequest,
-    memory: ConversationMemory = Depends(get_conversation_memory),  # noqa: B008
+    memory: ConversationStore = Depends(get_conversation_memory),  # noqa: B008
     principal: Principal = Depends(get_principal),  # noqa: B008
 ) -> ConversationTurnResponse:
     request.state.conversation_id = conversation_id
@@ -97,3 +97,26 @@ def append_turn(
         role=turn.role,
         content=turn.content,
     )
+
+
+@router.delete(
+    "/{conversation_id}",
+    status_code=204,
+    response_class=Response,
+    dependencies=[Depends(enforce_rate_limit("conversation"))],  # noqa: B008
+    summary="Delete a conversation and its history",
+)
+def delete_conversation(
+    request: Request,
+    conversation_id: str,
+    memory: ConversationStore = Depends(get_conversation_memory),  # noqa: B008
+    principal: Principal = Depends(get_principal),  # noqa: B008
+) -> Response:
+    request.state.conversation_id = conversation_id
+    try:
+        deleted = memory.delete_session(conversation_id, owner=principal.user_id)
+    except ConversationAccessError:
+        deleted = False  # someone else's conversation looks exactly like a missing one
+    if not deleted:
+        raise HTTPException(status_code=404, detail=_NOT_FOUND)
+    return Response(status_code=204)

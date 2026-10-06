@@ -1,0 +1,139 @@
+name: Nightly quality
+
+# The evaluation against a real model and the long fuzz run are too slow or too costly for every
+# push, so they run on a schedule and on demand.
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: "Provider for the evaluation (gemini or openai)"
+        default: gemini
+        required: false
+      fuzz_iterations:
+        description: "Validator fuzz iterations"
+        default: "20000"
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    name: Long validator fuzz run
+    runs-on: ubuntu-latest
+    env:
+      APP_ENV: test
+      LLM_MODE: mock
+      DATABASE_URL: sqlite:///./ci-app.db
+      ANALYTICS_DATABASE_URL: sqlite:///./ci-analytics.db
+      FUZZ_ITERATIONS: ${{ inputs.fuzz_iterations || '20000' }}
+      # A different seed each night explores new inputs; a failure prints the seed to reproduce.
+      FUZZ_SEED: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+      - name: Install backend
+        working-directory: backend
+        run: python -m pip install -e ".[dev]"
+      - name: Fuzz the validator
+        working-directory: backend
+        run: python -m pytest -m fuzz -q
+
+  evaluation:
+    name: Full text-to-SQL evaluation
+    runs-on: ubuntu-latest
+    env:
+      PROVIDER: ${{ inputs.provider || 'gemini' }}
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: app
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: ci-owner-password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U app -d app"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check that a provider key is available
+        id: key
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ "$PROVIDER" = "gemini" ] && [ -z "$GEMINI_API_KEY" ]; then
+            echo "::notice::GEMINI_API_KEY is not configured; skipping the model evaluation."
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          elif [ "$PROVIDER" = "openai" ] && [ -z "$OPENAI_API_KEY" ]; then
+            echo "::notice::OPENAI_API_KEY is not configured; skipping the model evaluation."
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-python@v5
+        if: steps.key.outputs.available == 'true'
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+      - name: Install backend
+        if: steps.key.outputs.available == 'true'
+        working-directory: backend
+        run: python -m pip install -e ".[dev]"
+      - name: Prepare the database
+        if: steps.key.outputs.available == 'true'
+        env:
+          APP_ENV: test
+          DATABASE_URL: postgresql+psycopg://app:ci-owner-password@localhost:5432/app
+          ANALYTICS_DATABASE_URL: postgresql+psycopg://analytics_readonly:ci-readonly-password@localhost:5432/app
+          PGPASSWORD: ci-owner-password
+          ANALYTICS_DATABASE_PASSWORD: ci-readonly-password
+        run: |
+          psql -h localhost -U app -d app -v ON_ERROR_STOP=1 -f database/init/01-analytics-role.sql
+          cd backend
+          python -m alembic upgrade head
+          python -m app.db.seed
+      - name: Restore the evaluation trend
+        if: steps.key.outputs.available == 'true'
+        uses: actions/cache@v4
+        with:
+          path: backend/eval-trend.jsonl
+          key: eval-trend-${{ github.run_id }}
+          restore-keys: eval-trend-
+      - name: Run the evaluation
+        if: steps.key.outputs.available == 'true'
+        working-directory: backend
+        env:
+          APP_ENV: test
+          DATABASE_URL: postgresql+psycopg://app:ci-owner-password@localhost:5432/app
+          ANALYTICS_DATABASE_URL: postgresql+psycopg://analytics_readonly:ci-readonly-password@localhost:5432/app
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-2.5-flash' }}
+        run: >-
+          python -m evals.run_eval --provider "$PROVIDER"
+          --report eval-report.json --markdown eval-summary.md --trend eval-trend.jsonl
+          --input-cost-per-million "${{ vars.EVAL_INPUT_COST_PER_MILLION || '0' }}"
+          --output-cost-per-million "${{ vars.EVAL_OUTPUT_COST_PER_MILLION || '0' }}"
+      - name: Publish the summary
+        if: always() && steps.key.outputs.available == 'true'
+        run: |
+          if [ -f backend/eval-summary.md ]; then cat backend/eval-summary.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - name: Upload report and trend
+        if: always() && steps.key.outputs.available == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: evaluation-${{ env.PROVIDER }}
+          path: |
+            backend/eval-report.json
+            backend/eval-summary.md
+            backend/eval-trend.jsonl
+          if-no-files-found: ignore

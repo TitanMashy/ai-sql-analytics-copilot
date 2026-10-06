@@ -29,6 +29,8 @@ function formatTooltipValue(value: unknown, format: string) {
 interface ChartRendererProps {
   data: Record<string, unknown>[];
   visualization: VisualizationResponse;
+  /** Accessible description of the chart; the same data is available in the result table. */
+  label?: string;
 }
 
 function getNumericValue(row: Record<string, unknown>, key: string) {
@@ -36,7 +38,7 @@ function getNumericValue(row: Record<string, unknown>, key: string) {
   return typeof value === "number" ? value : Number(value ?? 0);
 }
 
-export function ChartRenderer({ data, visualization }: ChartRendererProps) {
+export function ChartRenderer({ data, visualization, label }: ChartRendererProps) {
   const xKey = visualization.x_axis?.field ?? "label";
   const series = resolveSeries(visualization);
   const yKey = series[0].field;
@@ -61,7 +63,7 @@ export function ChartRenderer({ data, visualization }: ChartRendererProps) {
   switch (visualization.type) {
     case "bar":
       return (
-        <div className="h-80 w-full">
+        <div className="h-80 w-full" role="img" aria-label={label ?? visualization.title}>
           <ResponsiveContainer width="100%" height="100%">
             <BarChart {...commonProps}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -78,7 +80,7 @@ export function ChartRenderer({ data, visualization }: ChartRendererProps) {
       );
     case "line":
       return (
-        <div className="h-80 w-full">
+        <div className="h-80 w-full" role="img" aria-label={label ?? visualization.title}>
           <ResponsiveContainer width="100%" height="100%">
             <LineChart {...commonProps} data={sortByField(data, xKey)}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -102,7 +104,7 @@ export function ChartRenderer({ data, visualization }: ChartRendererProps) {
       );
     case "area":
       return (
-        <div className="h-80 w-full">
+        <div className="h-80 w-full" role="img" aria-label={label ?? visualization.title}>
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart {...commonProps} data={sortByField(data, xKey)}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -131,7 +133,7 @@ export function ChartRenderer({ data, visualization }: ChartRendererProps) {
         value: getNumericValue(entry as Record<string, unknown>, yKey),
       }));
       return (
-        <div className="h-80 w-full">
+        <div className="h-80 w-full" role="img" aria-label={label ?? visualization.title}>
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
               <Pie data={pieData} dataKey="value" nameKey="name" outerRadius={110} innerRadius={40} paddingAngle={2}>

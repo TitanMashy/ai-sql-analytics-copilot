@@ -1,0 +1,74 @@
+name: Load test
+
+# Weekly capacity check against the mock provider with simulated model latency (docs/capacity.md).
+# Thresholds in loadtest/ask.js fail the run when the error rate or p95 latency regresses.
+on:
+  schedule:
+    - cron: "43 3 * * 0"
+  workflow_dispatch:
+    inputs:
+      rate:
+        description: "Requests per second for the steady scenario"
+        default: "10"
+        required: false
+      scenario:
+        description: "steady (gates) or saturation (records only)"
+        default: steady
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  k6:
+    runs-on: ubuntu-latest
+    env:
+      POSTGRES_PASSWORD: ci-owner-password
+      ANALYTICS_DATABASE_PASSWORD: ci-readonly-password
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start the load-test stack
+        run: |
+          cp .env.example .env
+          echo "POSTGRES_PASSWORD=ci-owner-password" >> .env
+          echo "ANALYTICS_DATABASE_PASSWORD=ci-readonly-password" >> .env
+          docker compose -f docker-compose.yml -f docker-compose.loadtest.yml up -d --build backend
+      - name: Wait for the backend
+        run: >-
+          curl --fail --silent --show-error --retry 60 --retry-delay 5 --retry-connrefused
+          http://localhost:8000/health/ready
+      - name: Seed demo data
+        run: docker compose -f docker-compose.yml -f docker-compose.loadtest.yml --profile demo run --rm seed
+      - name: Run k6
+        run: >-
+          docker run --rm --network host -v "$PWD:/work" -w /work grafana/k6:latest run
+          -e BASE_URL=http://localhost:8000
+          -e SCENARIO=${{ inputs.scenario || 'steady' }}
+          -e RATE=${{ inputs.rate || '10' }}
+          loadtest/ask.js
+      - name: Summarize
+        if: always()
+        run: |
+          if [ -f loadtest-summary.json ]; then
+            python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          data = json.load(open("loadtest-summary.json"))
+          metrics = data["metrics"]
+          duration = metrics.get("ask_duration", {}).get("values", {})
+          failed = metrics.get("ask_failed", {}).get("values", {})
+          print("## Load test")
+          print(f"- requests: {metrics['http_reqs']['values']['count']}")
+          print(f"- failure rate: {failed.get('rate', 0):.2%}")
+          print(f"- ask p50 / p95 / max: {duration.get('med', 0):.0f} / {duration.get('p(95)', 0):.0f} / {duration.get('max', 0):.0f} ms")
+          PY
+          fi
+      - name: Upload the summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: loadtest-summary
+          path: loadtest-summary.json
+          if-no-files-found: ignore
+      - name: Show service logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail=200 backend

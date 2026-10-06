@@ -1,0 +1,148 @@
+# Example alert rules. Every alert links to the runbook that explains what to check and do.
+# Thresholds are starting points: tune them against your own traffic once the dashboards have
+# a few weeks of history (see docs/slos.md).
+groups:
+  - name: analytics-slo
+    rules:
+      - alert: AnalyticsAskAvailabilityFastBurn
+        expr: analytics:ask_availability:ratio_rate5m < 0.95 and analytics:ask_availability:ratio_rate1h < 0.98
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: "/ask is failing for more than 5% of requests"
+          description: "Availability over 5 minutes is {{ $value | humanizePercentage }}. The 99.5% monthly objective is burning quickly."
+          runbook: docs/runbooks/llm-provider-outage.md
+
+      - alert: AnalyticsAskAvailabilitySlowBurn
+        expr: analytics:ask_availability:ratio_rate1h < 0.995
+        for: 1h
+        labels:
+          severity: ticket
+        annotations:
+          summary: "/ask availability is below the 99.5% objective"
+          description: "Availability over the last hour is {{ $value | humanizePercentage }}."
+          runbook: docs/runbooks/database-saturation.md
+
+      - alert: AnalyticsAskLatencyHigh
+        expr: analytics:ask_latency_seconds:p95_5m > 15
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: "p95 /ask latency is above 15 seconds"
+          description: "p95 is {{ $value | humanizeDuration }}. Check the LLM call duration and SQL execution panels first."
+          runbook: docs/runbooks/llm-provider-outage.md
+
+      - alert: AnalyticsAnswerRateLow
+        expr: analytics:ask_answer_rate:ratio_rate1h < 0.90
+        for: 30m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "More than 10% of questions are being refused with 422"
+          description: "The answer rate is {{ $value | humanizePercentage }}. A regression in the model, prompt, or validator allowlist looks like this."
+          runbook: docs/runbooks/llm-provider-outage.md
+
+  - name: analytics-dependencies
+    rules:
+      - alert: AnalyticsLlmErrorRatioHigh
+        expr: analytics:llm_error_ratio:rate5m > 0.2
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: "More than 20% of LLM calls are failing"
+          description: "LLM error ratio is {{ $value | humanizePercentage }}."
+          runbook: docs/runbooks/llm-provider-outage.md
+
+      - alert: AnalyticsLlmConfigurationError
+        expr: sum(increase(analytics_llm_errors_total{code=~"LLM_CONFIGURATION_ERROR|LLM_MODEL_UNAVAILABLE"}[10m])) > 0
+        labels:
+          severity: page
+        annotations:
+          summary: "The LLM provider rejects the configured key or model"
+          description: "A missing, expired, or revoked API key (or a retired model name) produces these codes."
+          runbook: docs/runbooks/credential-rotation.md
+
+      - alert: AnalyticsDatabaseSaturated
+        expr: sum(rate(analytics_sql_execution_errors_total{code=~"DATABASE_POOL_TIMEOUT|DATABASE_UNAVAILABLE|QUERY_TIMEOUT"}[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: "The analytics database is timing out or refusing connections"
+          description: "{{ $value | humanize }} database failures per second."
+          runbook: docs/runbooks/database-saturation.md
+
+      - alert: AnalyticsQueryCostRejectionsHigh
+        expr: sum(rate(analytics_sql_execution_errors_total{code="QUERY_COST_EXCEEDED"}[15m])) > 0.05
+        for: 15m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "Many generated queries are rejected as too expensive"
+          description: "Either the model is producing unbounded queries or QUERY_COST_LIMIT is too low for the data volume."
+          runbook: docs/runbooks/database-saturation.md
+
+      - alert: AnalyticsRateLimiterBackendFailing
+        expr: sum(increase(analytics_rate_limiter_failures_total[5m])) > 0
+        labels:
+          severity: page
+        annotations:
+          summary: "The shared rate limiter backend (Redis) is failing"
+          description: "With RATE_LIMIT_FAIL_MODE=open limits are not enforced; with closed, requests are refused."
+          runbook: docs/runbooks/rate-limit-storm.md
+
+  - name: analytics-abuse
+    rules:
+      - alert: AnalyticsRateLimitStorm
+        expr: sum(rate(analytics_rate_limit_rejections_total[5m])) > 5
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "Sustained rate limiting: {{ $value | humanize }} rejections per second"
+          description: "One client, a runaway script, or an attack is hitting the limits."
+          runbook: docs/runbooks/rate-limit-storm.md
+
+      - alert: AnalyticsSecurityRejectionsSpike
+        expr: sum(rate(analytics_validation_rejections_total{reason="QUERY_SECURITY_ERROR"}[10m])) > 0.5
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: "A burst of generated SQL is being rejected as a security violation"
+          description: "Prompt-injection probing looks like this. Check the audit trail for the principals involved."
+          runbook: docs/runbooks/suspected-data-leak.md
+
+      - alert: AnalyticsDatabasePermissionDenied
+        expr: sum(increase(analytics_sql_execution_errors_total{code="QUERY_PERMISSION_ERROR"}[10m])) > 0
+        labels:
+          severity: page
+        annotations:
+          summary: "The database denied a query the validator allowed"
+          description: "The validator and the database privileges disagree: either a privilege regression or a validator bypass."
+          runbook: docs/runbooks/suspected-data-leak.md
+
+  - name: analytics-availability
+    rules:
+      - alert: AnalyticsBackendDown
+        expr: up{job="analytics-backend"} == 0
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: "A backend instance is not answering metrics scrapes"
+          description: "Instance {{ $labels.instance }} is down or its operator token changed."
+          runbook: docs/operations.md#incident-response
+
+      - alert: AnalyticsDeadlineExceededFrequent
+        expr: sum(rate(analytics_deadline_exceeded_total[10m])) > 0.05
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "Requests regularly hit the per-question deadline"
+          description: "The LLM or the database is slower than REQUEST_DEADLINE_SECONDS allows."
+          runbook: docs/runbooks/llm-provider-outage.md

@@ -1,3 +1,6 @@
+import random
+import time
+
 from app.llm.provider import LLMGeneration, LLMProviderError
 from app.services.schema_retriever import SchemaContext
 
@@ -5,9 +8,17 @@ from app.services.schema_retriever import SchemaContext
 class MockLLMProvider:
     name = "mock"
 
-    def __init__(self) -> None:
+    def __init__(self, latency_ms: int = 0, jitter_ms: int = 0) -> None:
         # Hints received by repair_sql, kept so tests can assert what the repair step was told.
         self.repair_hints: list[str] = []
+        # Simulated model latency for load tests: a fixed delay plus uniform jitter.
+        self.latency_ms = latency_ms
+        self.jitter_ms = jitter_ms
+
+    def _simulate_latency(self) -> None:
+        delay_ms = self.latency_ms + (random.uniform(0, self.jitter_ms) if self.jitter_ms else 0)
+        if delay_ms > 0:
+            time.sleep(delay_ms / 1000)
 
     def generate_sql(
         self,
@@ -16,6 +27,7 @@ class MockLLMProvider:
         conversation_context: str | None = None,
     ) -> LLMGeneration:
         del schema_context, conversation_context
+        self._simulate_latency()
         normalized = " ".join(question.casefold().split())
         if "active" in normalized and "vehicle" in normalized:
             return LLMGeneration(
