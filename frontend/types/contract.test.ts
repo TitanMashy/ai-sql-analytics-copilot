@@ -39,6 +39,7 @@ const askResponseFields: Record<keyof AskResponse, true> = {
   visualization: true,
   warnings: true,
 };
+
 const visualizationFields: Record<keyof VisualizationResponse, true> = {
   type: true,
   title: true,
@@ -46,23 +47,40 @@ const visualizationFields: Record<keyof VisualizationResponse, true> = {
   y_axis: true,
   series: true,
 };
-const axisFields: Record<keyof VisualizationAxisResponse, true> = { field: true, format: true };
-const kpiFields: Record<keyof KPIResponse, true> = { label: true, value: true, format: true };
+
+const axisFields: Record<keyof VisualizationAxisResponse, true> = {
+  field: true,
+  format: true,
+};
+
+const kpiFields: Record<keyof KPIResponse, true> = {
+  label: true,
+  value: true,
+  format: true,
+};
+
 const conversationFields: Record<keyof ConversationResponse, true> = {
   conversation_id: true,
   turns: true,
   context: true,
 };
+
 const turnFields: Record<keyof ConversationTurn, true> = {
   conversation_id: true,
   role: true,
   content: true,
 };
+
 const definitionsFields: Record<keyof BusinessDefinitionsResponse, true> = {
   definitions: true,
   examples: true,
 };
-const definitionFields: Record<keyof BusinessDefinition, true> = { name: true, definition: true };
+
+const definitionFields: Record<keyof BusinessDefinition, true> = {
+  name: true,
+  definition: true,
+};
+
 const feedbackFields: Record<keyof FeedbackRequest, true> = {
   request_id: true,
   helpful: true,
@@ -71,6 +89,21 @@ const feedbackFields: Record<keyof FeedbackRequest, true> = {
 
 function sorted(values: string[]) {
   return [...values].sort();
+}
+
+/**
+ * The generated OpenAPI contract contains metadata fields such as `$comment`
+ * alongside the actual response schemas. Validate and extract only the
+ * contract entries that are expected to contain arrays of field names.
+ */
+function contractFields(name: string): string[] {
+  const value = (contract as Record<string, unknown>)[name];
+
+  if (!Array.isArray(value) || !value.every((field) => typeof field === "string")) {
+    throw new Error(`Invalid API contract entry: ${name}`);
+  }
+
+  return value;
 }
 
 describe("API contract shared with the backend", () => {
@@ -85,7 +118,7 @@ describe("API contract shared with the backend", () => {
     ["BusinessDefinitionResponse", definitionFields],
     ["FeedbackRequest", feedbackFields],
   ] as const)("%s has the fields the backend serves", (name, fields) => {
-    const expected = (contract as Record<string, string[]>)[name];
+    const expected = contractFields(name);
 
     expect(sorted(Object.keys(fields))).toEqual(sorted(expected));
   });
@@ -93,7 +126,7 @@ describe("API contract shared with the backend", () => {
   it("the mock response carries every required AskResponse field", () => {
     const mock = buildMockAskResponse("How many active vehicles do we have?");
     const optional = new Set(["series", "confidence", "summary", "kpi", "visualization"]);
-    const required = (contract as Record<string, string[]>).AskResponse.filter(
+    const required = contractFields("AskResponse").filter(
       (field) => !optional.has(field),
     );
 
