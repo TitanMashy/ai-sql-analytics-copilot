@@ -589,3 +589,16 @@ There is no active sprint handoff. Treat the repository as the source of truth a
 - **Current worktree:** documentation-only changes are uncommitted. Do not commit unless explicitly instructed.
 
 No secrets, API keys, passwords, or token values belong in this file.
+
+
+## Sprint 12: reliability, quality gates, operations (implemented, unverified)
+
+Written without running tests, builds, migrations, or the app. Run everything before relying on it.
+
+- State: `ConversationStore` interface with in-memory and PostgreSQL implementations (`app/conversation/sql_store.py`, migration `c3d91e5a7b20`, operational tables on their own base); `RateLimiter` interface with Redis implementation; optional SQL cache; `python -m app.jobs.purge`.
+- Safety: `EXPLAIN` cost pre-flight (`QUERY_COST_LIMIT`), `*_FILE` secrets with value-free startup errors, demo seed refuses production, validator now catches tokenizer/recursion errors.
+- Observability: Prometheus metrics (`/api/v1/metrics/prometheus`), optional OpenTelemetry, audit trail, readiness `degraded` semantics, operator diagnostics.
+- Quality: PostgreSQL+Redis integration CI, golden evaluation suite (76 cases, `backend/evals`), validator fuzzing, coverage gates, mypy, supply-chain scans, Playwright+axe e2e, API contract test.
+- Ops: alerts, SLO rules, Grafana dashboard, five runbooks, Kubernetes examples, k6 load test, release workflow, smoke test, backup/restore/drill scripts, `docs/operations.md`, `evaluation.md`, `slos.md`, `capacity.md`, `threat-model.md`.
+- Frontend: result kept per message, restore on reload, delete, feedback, examples panel, pagination, CSV export, 401/429/504/422 states, schema-validated responses.
+- Pending real-environment evidence: first evaluation baseline, load-test saturation numbers, restore drill, rollback rehearsal, `make lock`, `ruff format`, mypy cleanup.

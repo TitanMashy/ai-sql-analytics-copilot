@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, BarChart3, LockKeyhole, MessageSquareText, Plus } from "lucide-react";
+import { Activity, BarChart3, LockKeyhole, MessageSquareText, Plus, Trash2 } from "lucide-react";
 
 export interface ConversationListItem {
   id: string;
@@ -12,6 +12,8 @@ interface AppSidebarProps {
   activeConversationId: string | null;
   onCreateConversation: () => void;
   onSelectConversation: (id: string) => void;
+  /** Deletes a conversation and its server-side history; omit to hide the delete buttons. */
+  onDeleteConversation?: (id: string) => void;
   busy: boolean;
 }
 
@@ -24,6 +26,7 @@ export function AppSidebar({
   activeConversationId,
   onCreateConversation,
   onSelectConversation,
+  onDeleteConversation,
   busy,
 }: AppSidebarProps) {
   return (
@@ -75,18 +78,35 @@ export function AppSidebar({
         {conversations.length ? (
           <nav aria-label="Recent conversations" className="space-y-1 overflow-y-auto">
             {conversations.map((item) => (
-              <button
+              <div
                 key={item.id}
-                type="button"
-                onClick={() => onSelectConversation(item.id)}
-                className={`w-full truncate rounded-md px-3 py-2 text-left text-xs transition ${
+                className={`group flex items-center rounded-md transition ${
                   activeConversationId === item.id
                     ? "bg-cyan-400/10 text-cyan-100 ring-1 ring-inset ring-cyan-300/20"
                     : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"
                 }`}
               >
-                {item.title}
-              </button>
+                <button
+                  type="button"
+                  onClick={() => onSelectConversation(item.id)}
+                  aria-current={activeConversationId === item.id ? "true" : undefined}
+                  className="min-w-0 flex-1 truncate px-3 py-2 text-left text-xs"
+                >
+                  {item.title}
+                </button>
+                {onDeleteConversation && (
+                  <button
+                    type="button"
+                    onClick={() => onDeleteConversation(item.id)}
+                    disabled={busy}
+                    aria-label={`Delete conversation: ${item.title}`}
+                    title="Delete conversation"
+                    className="mr-1 rounded p-1.5 text-slate-500 opacity-0 transition hover:bg-slate-700 hover:text-white focus:opacity-100 group-hover:opacity-100 disabled:opacity-30"
+                  >
+                    <Trash2 className="size-3.5" />
+                  </button>
+                )}
+              </div>
             ))}
           </nav>
         ) : (

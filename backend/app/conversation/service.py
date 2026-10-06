@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from functools import lru_cache
 from threading import RLock
 from typing import Literal
 from uuid import uuid4
@@ -51,7 +52,92 @@ class ConversationSession:
         return turn
 
 
-class ConversationMemory:
+class ConversationStore:
+    """The interface every conversation store implements, plus the shared context builder.
+
+    ``ConversationMemory`` (in process) is the default and the test double;
+    ``SqlConversationStore`` (PostgreSQL) is the durable implementation that several replicas can
+    share. Both enforce the same ownership rule: a conversation belongs to the principal that
+    created it, and anyone else sees it as missing.
+    """
+
+    max_turns: int
+    max_chars: int
+
+    def create_session(self, conversation_id: str | None = None, owner: str | None = None) -> str:
+        raise NotImplementedError
+
+    def get_or_create(self, conversation_id: str | None = None, owner: str | None = None) -> str:
+        return self.create_session(conversation_id, owner)
+
+    def assert_access(self, conversation_id: str, owner: str | None = None) -> None:
+        raise NotImplementedError
+
+    def get_session(
+        self, conversation_id: str, owner: str | None = None
+    ) -> ConversationSession | None:
+        raise NotImplementedError
+
+    def get_history(self, conversation_id: str, owner: str | None = None) -> list[ConversationTurn]:
+        raise NotImplementedError
+
+    def add_turn(
+        self,
+        conversation_id: str,
+        role: str,
+        content: str,
+        owner: str | None = None,
+        sql: str | None = None,
+        tables: tuple[str, ...] | list[str] = (),
+    ) -> ConversationTurn:
+        raise NotImplementedError
+
+    def delete_session(self, conversation_id: str, owner: str | None = None) -> bool:
+        """Delete a conversation. False when it does not exist; raises when it is not yours."""
+        raise NotImplementedError
+
+    def purge_expired(self) -> int:
+        """Remove conversations idle past the retention period; returns how many."""
+        raise NotImplementedError
+
+    def count_active(self) -> int:
+        raise NotImplementedError
+
+    def build_context(self, conversation_id: str, owner: str | None = None) -> str:
+        history = self.get_history(conversation_id, owner)
+        if not history:
+            return "No prior conversation context."
+
+        lines = [self._format_turn(turn) for turn in history[-self.max_turns :]]
+        # Keep whole turns, newest first, until the character budget is spent.
+        kept: list[str] = []
+        used = 0
+        for line in reversed(lines):
+            cost = len(line) + (1 if kept else 0)
+            if used + cost > self.max_chars:
+                break
+            kept.append(line)
+            used += cost
+        if not kept:
+            return lines[-1][-self.max_chars :]
+        return "\n".join(reversed(kept))
+
+    @staticmethod
+    def _format_turn(turn: ConversationTurn) -> str:
+        line = f"{turn.role}: {turn.content}"
+        if turn.sql:
+            sql = (
+                turn.sql
+                if len(turn.sql) <= MAX_SQL_CHARS_IN_CONTEXT
+                else turn.sql[:MAX_SQL_CHARS_IN_CONTEXT] + "..."
+            )
+            line += f"\n  SQL: {sql}"
+        if turn.tables:
+            line += f"\n  Tables: {', '.join(turn.tables)}"
+        return line
+
+
+class ConversationMemory(ConversationStore):
     """Process-local, bounded, owner-scoped conversation store.
 
     Every session belongs to the principal that created it. Reads and writes by anyone else look
@@ -77,7 +163,8 @@ class ConversationMemory:
 
     @staticmethod
     def default() -> ConversationMemory:
-        return get_conversation_memory()
+        store = get_conversation_memory()
+        return store  # type: ignore[return-value]
 
     # -- session lifecycle -------------------------------------------------------------------
 
@@ -94,9 +181,6 @@ class ConversationMemory:
             )
             return session_id
 
-    def get_or_create(self, conversation_id: str | None = None, owner: str | None = None) -> str:
-        return self.create_session(conversation_id, owner)
-
     def assert_access(self, conversation_id: str, owner: str | None = None) -> None:
         """Raise unless the conversation is absent or belongs to ``owner``."""
         with self._lock:
@@ -112,6 +196,26 @@ class ConversationMemory:
             if session is None or session.owner != owner or self._expired(session):
                 return None
             return session
+
+    def delete_session(self, conversation_id: str, owner: str | None = None) -> bool:
+        with self._lock:
+            session = self._sessions.get(conversation_id)
+            if session is None:
+                return False
+            self._require_owner(session, owner)
+            del self._sessions[conversation_id]
+            return True
+
+    def purge_expired(self) -> int:
+        with self._lock:
+            expired = [key for key, item in self._sessions.items() if self._expired(item)]
+            for key in expired:
+                del self._sessions[key]
+            return len(expired)
+
+    def count_active(self) -> int:
+        with self._lock:
+            return sum(1 for item in self._sessions.values() if not self._expired(item))
 
     # -- turns -------------------------------------------------------------------------------
 
@@ -147,38 +251,7 @@ class ConversationMemory:
                 session.turns = session.turns[-self.max_turns :]
             return turn
 
-    def build_context(self, conversation_id: str, owner: str | None = None) -> str:
-        history = self.get_history(conversation_id, owner)
-        if not history:
-            return "No prior conversation context."
-
-        lines = [self._format_turn(turn) for turn in history[-self.max_turns :]]
-        # Keep whole turns, newest first, until the character budget is spent.
-        kept: list[str] = []
-        used = 0
-        for line in reversed(lines):
-            cost = len(line) + (1 if kept else 0)
-            if used + cost > self.max_chars:
-                break
-            kept.append(line)
-            used += cost
-        if not kept:
-            return lines[-1][-self.max_chars :]
-        return "\n".join(reversed(kept))
-
     # -- internals ---------------------------------------------------------------------------
-
-    @staticmethod
-    def _format_turn(turn: ConversationTurn) -> str:
-        line = f"{turn.role}: {turn.content}"
-        if turn.sql:
-            sql = turn.sql if len(turn.sql) <= MAX_SQL_CHARS_IN_CONTEXT else (
-                turn.sql[:MAX_SQL_CHARS_IN_CONTEXT] + "..."
-            )
-            line += f"\n  SQL: {sql}"
-        if turn.tables:
-            line += f"\n  Tables: {', '.join(turn.tables)}"
-        return line
 
     @staticmethod
     def _require_owner(session: ConversationSession, owner: str | None) -> None:
@@ -205,5 +278,24 @@ class ConversationMemory:
 _default_conversation_memory = ConversationMemory()
 
 
-def get_conversation_memory() -> ConversationMemory:
+@lru_cache
+def get_conversation_memory() -> ConversationStore:
+    """The conversation store selected by ``CONVERSATION_STORE``.
+
+    ``memory`` (default) is process-local. ``postgres`` is durable and shared by every replica.
+    """
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    if settings.conversation_store == "postgres":
+        from app.conversation.sql_store import SqlConversationStore
+        from app.db.session import SessionLocal
+
+        return SqlConversationStore(
+            SessionLocal,
+            max_turns=settings.conversation_max_turns,
+            max_chars=settings.max_conversation_context_chars,
+            max_sessions_per_owner=settings.conversation_max_per_owner,
+            ttl_days=settings.conversation_ttl_days,
+        )
     return _default_conversation_memory

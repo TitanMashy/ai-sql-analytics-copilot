@@ -1,3 +1,4 @@
+import json
 import logging
 import re
 from dataclasses import dataclass
@@ -13,6 +14,7 @@ from app.analytics.validator import SQLValidator, ValidationResult
 from app.core.auth import Principal
 from app.core.metrics import metrics
 from app.core.telemetry import get_request_telemetry
+from app.core.tracing import record_span_error, set_span_attribute, span
 from app.db.analytics_surface import SCOPE_DENY, SCOPE_GLOBAL, SCOPE_TENANT
 
 logger = logging.getLogger(__name__)
@@ -107,6 +109,7 @@ class AnalyticsQueryService:
         query_timeout_seconds: float = 10.0,
         max_query_joins: int = 5,
         max_query_nesting: int = 3,
+        query_cost_limit: float | None = None,
     ) -> None:
         self.engine = engine
         self.validator = validator or SQLValidator(
@@ -116,17 +119,19 @@ class AnalyticsQueryService:
         )
         self.max_result_rows = max_result_rows
         self.query_timeout_seconds = query_timeout_seconds
+        self.query_cost_limit = query_cost_limit
 
     def validate(self, sql: str, request_id: str | None = None) -> ValidationResult:
         started_at = perf_counter()
-        result = self.validator.validate(sql)
+        telemetry = get_request_telemetry()
+        with span("sql.validate", request_id=telemetry.request_id if telemetry else request_id):
+            result = self.validator.validate(sql)
         elapsed_ms = (perf_counter() - started_at) * 1000
         metrics.observe("sql_validation_latency_ms", elapsed_ms)
-        telemetry = get_request_telemetry()
         if telemetry:
             telemetry.sql_validation_latency_ms += elapsed_ms
         if not result.valid:
-            metrics.increment("validation_failures_total")
+            metrics.record_validation_failure(result.error_code)
         logger.info(
             "analytics query validation completed",
             extra={
@@ -170,20 +175,28 @@ class AnalyticsQueryService:
         scope, customer_id = self._tenant_scope(principal)
 
         started_at = perf_counter()
-        try:
-            with self.engine.connect() as connection:
-                is_postgresql = connection.dialect.name == "postgresql"
-                if is_postgresql:
-                    self._prepare_postgresql_transaction(
-                        connection, effective_timeout, scope, customer_id
-                    )
-                result = connection.exec_driver_sql(
-                    self._driver_sql(validation.normalized_sql or sql, connection)
-                )
-                rows = result.fetchmany(self.max_result_rows + 1)
-                columns = list(result.keys())
-        except SQLAlchemyError as error:
-            raise self._translate_error(error, started_at, request_id) from error
+        with span("sql.execute", request_id=request_id, scope=scope) as current:
+            try:
+                with self.engine.connect() as connection:
+                    is_postgresql = connection.dialect.name == "postgresql"
+                    if is_postgresql:
+                        self._prepare_postgresql_transaction(
+                            connection, effective_timeout, scope, customer_id
+                        )
+                    statement = self._driver_sql(validation.normalized_sql or sql, connection)
+                    if is_postgresql:
+                        self._check_query_cost(connection, statement)
+                    result = connection.exec_driver_sql(statement)
+                    rows = result.fetchmany(self.max_result_rows + 1)
+                    columns = list(result.keys())
+            except AnalyticsServiceError as error:
+                record_span_error(current, error.code)
+                raise
+            except SQLAlchemyError as error:
+                translated = self._translate_error(error, started_at, request_id)
+                record_span_error(current, translated.code)
+                raise translated from error
+            set_span_attribute(current, "db.row_count", len(rows))
 
         truncated = len(rows) > self.max_result_rows
         if truncated:
@@ -215,6 +228,36 @@ class AnalyticsQueryService:
             column_types=column_types,
             truncated=truncated,
         )
+
+    def _check_query_cost(self, connection: Connection, statement: str) -> None:
+        """Reject a query whose planner estimate exceeds ``QUERY_COST_LIMIT`` before running it.
+
+        ``EXPLAIN`` plans the statement without executing it, inside the same read-only,
+        tenant-scoped transaction. The estimate is the planner's total cost in its own units, not
+        seconds, so the limit is a coarse guard against runaway plans (very large joins, missing
+        filters), complementing the statement timeout, which only acts after work has started.
+        """
+        if self.query_cost_limit is None:
+            return
+        raw = connection.exec_driver_sql(f"EXPLAIN (FORMAT JSON) {statement}").scalar()
+        try:
+            plan = json.loads(raw) if isinstance(raw, (str, bytes)) else raw
+            total_cost = float(plan[0]["Plan"]["Total Cost"])
+        except (KeyError, IndexError, TypeError, ValueError):
+            return  # an unexpected plan shape must not block an otherwise valid query
+        if total_cost > self.query_cost_limit:
+            metrics.record_sql_failure("QUERY_COST_EXCEEDED")
+            raise AnalyticsServiceError(
+                "QUERY_COST_EXCEEDED",
+                "The query would scan too much data. Narrow it with filters or a date range.",
+                400,
+                repairable=True,
+                repair_hint=(
+                    f"The planner estimates a cost of {total_cost:,.0f}, above the limit of "
+                    f"{self.query_cost_limit:,.0f}. Add selective filters, a narrower date range, "
+                    "or aggregate before joining large tables."
+                ),
+            )
 
     @staticmethod
     def _tenant_scope(principal: Principal | None) -> tuple[str, str]:
@@ -277,7 +320,6 @@ class AnalyticsQueryService:
     ) -> AnalyticsServiceError:
         elapsed_ms = (perf_counter() - started_at) * 1000
         metrics.observe("sql_execution_latency_ms", elapsed_ms)
-        metrics.increment("sql_execution_failures_total")
         telemetry = get_request_telemetry()
         if telemetry:
             telemetry.sql_execution_latency_ms += elapsed_ms
@@ -293,14 +335,17 @@ class AnalyticsQueryService:
         hint = _repair_hint(error, sqlstate)
 
         if isinstance(error, SQLAlchemyTimeoutError):
-            return AnalyticsServiceError(
+            translated = AnalyticsServiceError(
                 "DATABASE_POOL_TIMEOUT",
                 "The analytics database is busy. Please retry later.",
                 503,
             )
-        if sqlstate is not None:
-            return self._from_sqlstate(sqlstate, hint)
-        return self._from_message(error, hint)
+        elif sqlstate is not None:
+            translated = self._from_sqlstate(sqlstate, hint)
+        else:
+            translated = self._from_message(error, hint)
+        metrics.record_sql_failure(translated.code)
+        return translated
 
     @staticmethod
     def _from_sqlstate(sqlstate: str, hint: str) -> AnalyticsServiceError:

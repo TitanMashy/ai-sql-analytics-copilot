@@ -31,6 +31,8 @@ export interface GeneratedQueryResponse {
 }
 
 export interface AskResponse extends GeneratedQueryResponse {
+  /** Correlates this answer with logs, the audit trail, and feedback. */
+  request_id?: string | null;
   columns: string[];
   rows: Record<string, unknown>[];
   row_count: number;
@@ -65,4 +67,20 @@ export interface QuestionRequest {
 export interface ErrorDebug {
   sql?: string;
   last_error?: string;
+}
+
+export interface BusinessDefinition {
+  name: string;
+  definition: string;
+}
+
+export interface BusinessDefinitionsResponse {
+  definitions: BusinessDefinition[];
+  examples: string[];
+}
+
+export interface FeedbackRequest {
+  request_id: string;
+  helpful: boolean;
+  conversation_id?: string | null;
 }

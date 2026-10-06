@@ -1,10 +1,20 @@
 from __future__ import annotations
 
+import os
+from collections.abc import Mapping
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import Field, SecretStr, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class ConfigurationError(RuntimeError):
+    """The process cannot start with the supplied configuration.
+
+    The message names each offending setting and the problem, never its value.
+    """
 
 
 class Settings(BaseSettings):
@@ -100,6 +110,63 @@ class Settings(BaseSettings):
     jwt_issuer: str | None = Field(default=None, validation_alias="JWT_ISSUER")
     jwt_audience: str | None = Field(default=None, validation_alias="JWT_AUDIENCE")
 
+    app_version: str = Field(default="0.0.0-dev", validation_alias="APP_VERSION")
+
+    # Durable conversations -------------------------------------------------------------------
+    conversation_store: Literal["memory", "postgres"] = Field(
+        default="memory", validation_alias="CONVERSATION_STORE"
+    )
+    conversation_ttl_days: int = Field(default=30, gt=0, validation_alias="CONVERSATION_TTL_DAYS")
+    conversation_max_per_owner: int = Field(
+        default=200, gt=0, validation_alias="CONVERSATION_MAX_PER_OWNER"
+    )
+    conversation_max_turns: int = Field(
+        default=8, gt=0, le=100, validation_alias="CONVERSATION_MAX_TURNS"
+    )
+
+    # Shared rate limiting ---------------------------------------------------------------------
+    rate_limit_backend: Literal["memory", "redis"] = Field(
+        default="memory", validation_alias="RATE_LIMIT_BACKEND"
+    )
+    redis_url: SecretStr | None = Field(default=None, validation_alias="REDIS_URL", repr=False)
+    rate_limit_fail_mode: Literal["open", "closed"] = Field(
+        default="open", validation_alias="RATE_LIMIT_FAIL_MODE"
+    )
+
+    # Prompt-to-SQL cache (off by default) -----------------------------------------------------
+    sql_cache_enabled: bool = Field(default=False, validation_alias="SQL_CACHE_ENABLED")
+    sql_cache_ttl_seconds: int = Field(
+        default=300, gt=0, validation_alias="SQL_CACHE_TTL_SECONDS"
+    )
+    sql_cache_max_entries: int = Field(
+        default=1000, gt=0, validation_alias="SQL_CACHE_MAX_ENTRIES"
+    )
+
+    # Query cost pre-flight (PostgreSQL planner cost units; unset disables it) ----------------
+    query_cost_limit: float | None = Field(default=1_000_000.0, validation_alias="QUERY_COST_LIMIT")
+
+    # Load-test support: simulated model latency for the mock provider (ignored in production,
+    # where the mock provider is disabled).
+    mock_llm_latency_ms: int = Field(
+        default=0, ge=0, le=60_000, validation_alias="MOCK_LLM_LATENCY_MS"
+    )
+    mock_llm_jitter_ms: int = Field(
+        default=0, ge=0, le=60_000, validation_alias="MOCK_LLM_JITTER_MS"
+    )
+
+    # Audit and tracing ------------------------------------------------------------------------
+    audit_sink: Literal["log", "database", "both"] = Field(
+        default="log", validation_alias="AUDIT_SINK"
+    )
+    audit_retention_days: int = Field(default=365, gt=0, validation_alias="AUDIT_RETENTION_DAYS")
+    otel_enabled: bool = Field(default=False, validation_alias="OTEL_ENABLED")
+    otel_exporter_otlp_endpoint: str | None = Field(
+        default=None, validation_alias="OTEL_EXPORTER_OTLP_ENDPOINT"
+    )
+    otel_service_name: str = Field(
+        default="analytics-copilot", validation_alias="OTEL_SERVICE_NAME"
+    )
+
     @field_validator("cors_allowed_origins", mode="before")
     @classmethod
     def parse_origins(cls, value: object) -> object:
@@ -112,6 +179,21 @@ class Settings(BaseSettings):
     def validate_positive_optional(cls, value: int | None) -> int | None:
         if value is not None and value <= 0:
             raise ValueError("Value must be greater than zero.")
+        return value
+
+    @field_validator("query_cost_limit", mode="before")
+    @classmethod
+    def parse_query_cost_limit(cls, value: object) -> object:
+        # An empty or "0"/"off" value disables the pre-flight; anything else must be positive.
+        if value is None or (isinstance(value, str) and value.strip().casefold() in {"", "off"}):
+            return None
+        return value
+
+    @field_validator("query_cost_limit")
+    @classmethod
+    def validate_query_cost_limit(cls, value: float | None) -> float | None:
+        if value is not None and value <= 0:
+            return None
         return value
 
     @field_validator("log_level")
@@ -172,6 +254,18 @@ class Settings(BaseSettings):
             self.auth_static_token and self.auth_static_token.get_secret_value().strip()
         ):
             raise ValueError("AUTH_STATIC_TOKEN is required when AUTH_MODE=static.")
+        if self.rate_limit_backend == "redis" and not (
+            self.redis_url and self.redis_url.get_secret_value().strip()
+        ):
+            raise ValueError("REDIS_URL is required when RATE_LIMIT_BACKEND=redis.")
+        if self.conversation_store == "postgres" and not self.database_url.startswith(
+            "postgresql"
+        ):
+            raise ValueError("CONVERSATION_STORE=postgres requires a PostgreSQL DATABASE_URL.")
+        if self.audit_sink in {"database", "both"} and not self.database_url.startswith(
+            "postgresql"
+        ):
+            raise ValueError("AUDIT_SINK=database requires a PostgreSQL DATABASE_URL.")
         return self
 
     def _validate_jwt_configuration(self) -> None:
@@ -184,6 +278,74 @@ class Settings(BaseSettings):
             raise ValueError("JWT_PUBLIC_KEY is required for asymmetric JWT algorithms.")
 
 
+# Settings that may be supplied as ``NAME_FILE=/path`` (Docker/Kubernetes secrets, a mounted
+# secret-manager volume) instead of ``NAME=value``. Only secrets are listed: a value that ends up
+# in an environment variable is visible to every process in the container and to `docker inspect`.
+FILE_SECRETS: dict[str, str] = {
+    "DATABASE_URL": "database_url",
+    "ANALYTICS_DATABASE_URL": "analytics_database_url",
+    "GEMINI_API_KEY": "gemini_api_key",
+    "OPENAI_API_KEY": "openai_api_key",
+    "AUTH_STATIC_TOKEN": "auth_static_token",
+    "JWT_SECRET": "jwt_secret",
+    "JWT_PUBLIC_KEY": "jwt_public_key",
+    "METRICS_TOKEN": "metrics_token",
+    "REDIS_URL": "redis_url",
+}
+
+
+def read_secret_files(environ: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Resolve ``*_FILE`` variables to setting values.
+
+    Setting both ``NAME`` and ``NAME_FILE`` is an error rather than a silent precedence rule, so a
+    rotated file secret can never be shadowed by a stale environment value.
+    """
+    environ = os.environ if environ is None else environ
+    problems: list[str] = []
+    values: dict[str, str] = {}
+    for env_name, field_name in FILE_SECRETS.items():
+        path = environ.get(f"{env_name}_FILE", "").strip()
+        if not path:
+            continue
+        if environ.get(env_name, "").strip():
+            problems.append(f"{env_name}: set either {env_name} or {env_name}_FILE, not both")
+            continue
+        try:
+            contents = Path(path).read_text(encoding="utf-8").strip()
+        except OSError:
+            problems.append(f"{env_name}_FILE: the file is missing or unreadable")
+            continue
+        if not contents:
+            problems.append(f"{env_name}_FILE: the file is empty")
+            continue
+        values[field_name] = contents
+    if problems:
+        raise ConfigurationError(_format_problems(problems))
+    return values
+
+
+def _format_problems(problems: list[str]) -> str:
+    return "Invalid configuration:\n" + "\n".join(f"  - {problem}" for problem in problems)
+
+
+def _describe_validation_error(error: ValidationError) -> str:
+    aliases = {
+        name: str(field.validation_alias or name) for name, field in Settings.model_fields.items()
+    }
+    problems = []
+    for item in error.errors(include_input=False, include_url=False):
+        location = ".".join(str(part) for part in item["loc"])
+        message = str(item["msg"]).removeprefix("Value error, ")
+        label = aliases.get(location, location)
+        problems.append(f"{label}: {message}" if label else message)
+    return _format_problems(problems)
+
+
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    """Load and validate configuration, failing with a precise, value-free message."""
+    overrides = read_secret_files()
+    try:
+        return Settings(**overrides)
+    except ValidationError as error:
+        raise ConfigurationError(_describe_validation_error(error)) from None

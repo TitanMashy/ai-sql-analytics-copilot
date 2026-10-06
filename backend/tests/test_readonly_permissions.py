@@ -12,6 +12,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.analytics.service import AnalyticsQueryService
 from app.core.auth import ANALYTICS_ADMIN_ROLE, Principal
 from app.core.config import get_settings
+from tests.helpers import require_integration_or_skip
 
 pytestmark = pytest.mark.integration
 
@@ -20,7 +21,7 @@ pytestmark = pytest.mark.integration
 def engine():
     settings = get_settings()
     if not settings.analytics_database_url.startswith("postgresql"):
-        pytest.skip("PostgreSQL analytics credentials are not configured")
+        require_integration_or_skip("PostgreSQL analytics credentials are not configured")
     engine = create_engine(settings.analytics_database_url)
     yield engine
     engine.dispose()
@@ -110,7 +111,7 @@ def _two_customers(engine) -> tuple[int, int]:
         _scoped(connection, "global")
         ids = [row[0] for row in connection.execute(text("SELECT id FROM customers ORDER BY id"))]
     if len(ids) < 2:
-        pytest.skip("The database must be seeded with at least two customers")
+        require_integration_or_skip("The database must be seeded with at least two customers")
     return ids[0], ids[1]
 
 
@@ -255,3 +256,47 @@ def test_executor_opens_a_read_only_transaction_before_any_query(engine) -> None
     assert executed[0] == "SET TRANSACTION READ ONLY"
     assert "set_config" in executed[1]
     assert "SELECT COUNT(*)" in executed[2].upper()
+
+
+# -- query cost pre-flight ------------------------------------------------------------------
+
+
+def test_expensive_query_is_rejected_before_it_runs(engine) -> None:
+    from app.analytics.service import AnalyticsServiceError
+
+    service = AnalyticsQueryService(engine, query_cost_limit=1_000_000)
+    # A self-join on an inequality is a near-cartesian product of the largest table.
+    expensive = (
+        "SELECT COUNT(*) AS n FROM trips a JOIN trips b ON a.start_time < b.end_time "
+        "WHERE a.id <> b.id"
+    )
+
+    with pytest.raises(AnalyticsServiceError) as error:
+        service.execute(expensive, principal=Principal("a", roles=(ANALYTICS_ADMIN_ROLE,)))
+
+    assert error.value.code == "QUERY_COST_EXCEEDED"
+    assert error.value.repairable
+    assert "estimates a cost" in error.value.repair_hint
+    assert "estimates a cost" not in error.value.message
+
+
+def test_cheap_query_passes_the_cost_check(engine) -> None:
+    service = AnalyticsQueryService(engine, query_cost_limit=1_000_000)
+
+    result = service.execute(
+        "SELECT COUNT(*) AS n FROM vehicles",
+        principal=Principal("a", roles=(ANALYTICS_ADMIN_ROLE,)),
+    )
+
+    assert result.row_count == 1
+
+
+def test_cost_check_can_be_disabled(engine) -> None:
+    service = AnalyticsQueryService(engine, query_cost_limit=None)
+
+    result = service.execute(
+        "SELECT COUNT(*) AS n FROM vehicles",
+        principal=Principal("a", roles=(ANALYTICS_ADMIN_ROLE,)),
+    )
+
+    assert result.row_count == 1
