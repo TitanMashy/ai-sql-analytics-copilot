@@ -68,15 +68,7 @@ services:
       CONVERSATION_STORE: ${CONVERSATION_STORE:-postgres}
       CONVERSATION_TTL_DAYS: ${CONVERSATION_TTL_DAYS:-30}
       AUDIT_SINK: ${AUDIT_SINK:-both}
-      # Shared rate limiting needs Redis: `docker compose --profile redis up` and set
-      # RATE_LIMIT_BACKEND=redis REDIS_URL=redis://redis:6379/0.
-      RATE_LIMIT_BACKEND: ${RATE_LIMIT_BACKEND:-memory}
-      RATE_LIMIT_FAIL_MODE: ${RATE_LIMIT_FAIL_MODE:-open}
-      REDIS_URL: ${REDIS_URL:-}
-      SQL_CACHE_ENABLED: ${SQL_CACHE_ENABLED:-false}
       QUERY_COST_LIMIT: ${QUERY_COST_LIMIT:-1000000}
-      OTEL_ENABLED: ${OTEL_ENABLED:-false}
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     # No published port: only the frontend (the same-origin proxy) reaches the backend.
     # Use docker-compose.dev.yml to publish it for local debugging.
     expose:
@@ -152,17 +144,6 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
-
-  # Optional shared counter store for rate limiting across replicas (profile: redis).
-  redis:
-    profiles: ["redis"]
-    image: redis:7-alpine
-    command: ["redis-server", "--save", "", "--appendonly", "no"]
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
 
   frontend:
     build:

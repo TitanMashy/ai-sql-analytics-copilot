@@ -15,13 +15,5 @@
     "p95_latency_ms_max": null,
     "adversarial_leaks_max": 0,
     "reference_failures_max": 0
-  },
-  "openai": {
-    "execution_accuracy_min": null,
-    "validation_failure_rate_max": null,
-    "repair_rate_max": null,
-    "p95_latency_ms_max": null,
-    "adversarial_leaks_max": 0,
-    "reference_failures_max": 0
   }
 }

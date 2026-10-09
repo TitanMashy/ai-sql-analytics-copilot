@@ -614,3 +614,40 @@ Do not remove: the validator, the executor's read-only transaction, the `analyti
 **The shape of the situation.** The project did not become complicated because the core was rewritten; the core roughly doubled and mostly improved. It became complicated because a production-operations layer (state backends, observability, evaluation, release, runbooks, e2e, load) was added around it, none of which has ever run. Decide D2 and D6 first; the rest of the roadmap follows from them.
 
 **Limits of this analysis.** Behaviour was read, not run; test counts are `def test_` and `it(` matches, not passing tests; line counts exclude lockfiles and images; "unused" means no importer found by `grep`, not proof of unreachability through configuration.
+
+---
+
+## 18. Decisions and progress log
+
+Decisions made after the stabilization pass (`progress.md` section 22):
+
+| Decision | Answer | Consequence |
+|---|---|---|
+| D2 deployment story | Single instance | Redis limiter, SQL cache, tracing, Kubernetes/release assets become removal candidates (not yet removed) |
+| D6 tenant isolation | Real requirement, keep | Views, tenant scope and JWT `customer_id` stay untouched |
+| D1 OpenAI provider | Remove | Done (see below) |
+
+Progress:
+
+- **P1 dead code: done.** Removed `backend/app/sql/` (`examples.py`), `RequestDeadlineExceeded` and `Deadline.check`, `ConversationStore.get_or_create`, `ConversationMemory.default`, `get_database_schema` (and its now-unused imports), and `getSchema` in `frontend/lib/api.ts`. Each had no caller outside this document. Checks after removal: ruff, format, mypy, 404 backend unit tests, frontend lint, 122 tests and `tsc` all pass. Integration tests were not re-run for this step.
+- **D1 OpenAI provider: done.** Removed `llm/openai_provider.py`, the factory branch, the `openai_api_key` / `openai_model` settings and the `OPENAI_API_KEY` `_FILE` secret, the readiness entry, the `openai` dependency, the `openai` evaluation threshold and CLI choice, and the OpenAI lines in the nightly workflow and docs. `LLM_MODE` now accepts only `mock` or `gemini`; `LLM_MODE=openai` fails at startup naming the setting. Checks: ruff, format, mypy, 404 backend unit tests (also with `openai` uninstalled), backend image builds and imports without the package. Integration tests and the full Compose stack were not re-run for this step.
+- **F6 SQL cache: done.** Removed `services/sql_cache.py`, its hooks in `generation.py`, the `SQL_CACHE_*` settings and Compose/`.env.example` entries, the cache metrics, `schema_fingerprint()` (only the cache used it), the readiness feature flag, the Grafana panel and `analytics:sql_cache_hit_ratio:rate1h` rule, and the doc/runbook mentions. Checks: ruff, format, mypy, 394 backend unit tests (the 10 cache tests were removed with the feature).
+- **F7 OpenTelemetry tracing: done.** Removed `core/tracing.py`, the `span(...)` wrappers in `main.py`, `generation.py` and `analytics/service.py` (bodies dedented, logic unchanged), the `OTEL_*` settings and Compose/`.env.example` entries, the `tracing` extra in `pyproject.toml` (and `,tracing` in CI), the readiness flag, the tracing tests, and the doc mentions. Checks: ruff, format, mypy, 392 backend unit tests. The PostgreSQL integration tests were not re-run for this step on its own.
+- **F4 Redis rate limiter: done.** Removed `core/redis_limiter.py`, the backend switch in `core/rate_limit.py` (the in-process `SlidingWindowRateLimiter` stays), the `RATE_LIMIT_BACKEND` / `REDIS_URL` / `RATE_LIMIT_FAIL_MODE` settings and the `REDIS_URL` `_FILE` secret, the readiness `rate_limiter` degraded/fail-closed logic and the diagnostics entry, the `rate_limiter_failures_total` metric and its alert, the Compose `redis` service and profile, the Redis service in CI, the `redis` dependency, the Redis tests, and the doc references; `rate-limit-storm.md` was rewritten without Redis. Checks: ruff, format, mypy, 380 backend unit tests, 43 PostgreSQL integration tests on a fresh database (this also covers the tracing step), evaluation reference check. The Kubernetes manifest still mentions Redis; it is removed in the next step.
+- **F16 Kubernetes and release pipeline: done (partly).** Removed `ops/kubernetes/`, `.github/workflows/release.yml`, `scripts/deploy.sh` and `scripts/deploy.d/`, `scripts/release_notes.py`, and the tests for the manifest and release notes. `docs/operations.md` now describes a manual Compose release (tag, `docker compose up --build -d`, smoke test) and rollback. **Kept:** `scripts/smoke_test.py`, backup/restore scripts and drills, the Prometheus rules, Grafana dashboard and runbooks, and the CI image build and scan job. Checks: ruff, format, mypy, 375 backend unit tests.
+- **F10 example-question lists: reviewed, no change.** The finding overstated the duplication. The backend list is the API's source of truth (`/schema/business-definitions`), the frontend `FALLBACK_EXAMPLES` is a deliberate offline fallback for when that call fails, and the composer chips are different short phrases for a different UI element. Merging them would add coupling for no gain.
+- **F11 three descriptions of the response shape: left as is.** The shared `api-contract.json` plus the two contract tests are the safety net that catches backend/frontend drift; removing them would trade a small maintenance cost for silent breakage.
+- **Final verification of steps F6, F7, F4 and F16** (cumulative): ruff, format and mypy pass; 375 backend unit tests pass with `openai` and `redis` uninstalled from the virtual environment; the backend image builds and the app imports and loads the mock provider inside it; 43 PostgreSQL integration tests, the migrations, the privilege check and the evaluation reference check passed on a fresh database after the Redis step (the Kubernetes/release step changed no runtime code). `opentelemetry-api` still appears in the environment because FastAPI itself depends on it; this project no longer imports it.
+
+**Still pending, each needing your decision before anything is removed:**
+
+| Item | What it is | Why it waits |
+|---|---|---|
+| F5 metrics kept twice | JSON `/api/v1/metrics` snapshot and the Prometheus registry | Dropping one changes a public endpoint or the alert/dashboard inputs |
+| D3 audit and feedback | `audit_log` table, `/feedback` route, UI thumbs | Depends on whether you need to review who asked what |
+| D4 direct SQL endpoints | `/analytics/query` and `/validate` (off in production, blocked by the proxy) | Removing them removes a developer surface and its tests |
+| F9 `static` auth mode | One shared development token | Convenient for local use; small saving |
+| F17 documentation overlap | `security.md`, `production-security-review.md`, `threat-model.md`, `progress.md`, `sprints.md` | Merging risks losing detail; needs your call on what to keep |
+| F14 splitting `ask` / `execute` | Readability refactor of the two largest functions | Behavioural risk; worth doing only with the integration suite running |
+| D8 evaluation suite, k6 load test, Playwright e2e | Test and tooling assets | Cost/benefit depends on whether you will run them |
+| D7 token issuing | Nothing issues JWTs in production | A product decision, not a cleanup |

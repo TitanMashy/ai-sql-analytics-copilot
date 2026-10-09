@@ -16,7 +16,6 @@ ROOT = Path(__file__).resolve().parents[2]
 ALERTS = ROOT / "ops" / "prometheus" / "alerts.yml"
 SLO_RULES = ROOT / "ops" / "prometheus" / "slo-rules.yml"
 DASHBOARD = ROOT / "ops" / "grafana" / "dashboard.json"
-KUBERNETES = ROOT / "ops" / "kubernetes" / "analytics-backend.yaml"
 
 METRIC = re.compile(r"\banalytics_[a-z0-9_]+")
 RECORDED = re.compile(r"\banalytics:[a-z0-9_:]+")
@@ -123,16 +122,6 @@ def test_slo_document_names_each_objective_and_its_recording_rule() -> None:
     ):
         assert rule in text
         assert rule in recorded_rule_names()
-
-
-def test_kubernetes_example_separates_liveness_from_readiness() -> None:
-    text = KUBERNETES.read_text(encoding="utf-8")
-
-    assert re.search(r"livenessProbe:\s*\n\s*httpGet: \{path: /health,", text)
-    assert re.search(r"readinessProbe:\s*\n\s*httpGet: \{path: /health/ready,", text)
-    assert "maxUnavailable: 0" in text
-    assert "kind: CronJob" in text and "app.jobs.purge" in text
-    assert "alembic" in text  # migrations run as a Job, not at startup
 
 
 @pytest.mark.parametrize("name", ["backup_postgres.sh", "restore_postgres.sh", "restore_drill.sh"])

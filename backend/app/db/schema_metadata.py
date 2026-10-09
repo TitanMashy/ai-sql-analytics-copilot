@@ -1,10 +1,7 @@
-import hashlib
 import re
 from dataclasses import dataclass
-from functools import lru_cache
-from typing import Any
 
-from sqlalchemy import CheckConstraint, inspect
+from sqlalchemy import CheckConstraint
 
 from app.db.analytics_surface import PII_COLUMNS
 from app.db.base import Base
@@ -105,27 +102,3 @@ def get_schema_metadata() -> tuple[TableMetadata, ...]:
             )
         )
     return tuple(metadata)
-
-
-@lru_cache
-def schema_fingerprint() -> str:
-    """A short hash of the analytics surface (tables, columns, types, enum values).
-
-    Used to version caches: any schema change produces a new fingerprint, which invalidates
-    entries created against the old schema.
-    """
-    digest = hashlib.sha256()
-    for table in get_schema_metadata():
-        digest.update(table.name.encode())
-        for column in table.columns:
-            allowed = ",".join(column.allowed_values)
-            digest.update(f"|{column.name}:{column.data_type}:{allowed}".encode())
-        digest.update(b";")
-    return digest.hexdigest()[:16]
-
-
-def get_database_schema(engine: Any) -> tuple[TableMetadata, ...]:
-    """Return metadata for tables currently present in a database connection."""
-    inspector = inspect(engine)
-    present_tables = set(inspector.get_table_names())
-    return tuple(table for table in get_schema_metadata() if table.name in present_tables)

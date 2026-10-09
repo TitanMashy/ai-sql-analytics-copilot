@@ -18,5 +18,3 @@ scrape_configs:
     # Scrape every replica directly; the frontend proxy does not forward this route.
     static_configs:
       - targets: ["backend:8000"]
-    # On Kubernetes, replace static_configs with kubernetes_sd_configs (role: pod) selecting
-    # app=analytics-backend, so each replica is scraped individually.

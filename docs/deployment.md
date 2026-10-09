@@ -14,7 +14,7 @@ Copy `.env.example` to `.env` for local Compose use. `.env` is ignored by Git. R
 | `ANALYTICS_DATABASE_URL` | Restricted query connection | Use the separate `analytics_readonly` role. |
 | `POSTGRES_PASSWORD` | Fresh Compose database bootstrap | Use a unique secret; replace the `.env.example` placeholder. |
 | `ANALYTICS_DATABASE_PASSWORD` | Fresh `analytics_readonly` role bootstrap | Use a different secret from `POSTGRES_PASSWORD`. |
-| `LLM_MODE` | `mock`, `gemini`, or legacy `openai` | `mock` needs no provider key. |
+| `LLM_MODE` | `mock` or `gemini` | `mock` needs no provider key. |
 | `GEMINI_API_KEY` | Gemini credential | Supply through the runtime environment or a secret manager; never bake it into an image. |
 | `GEMINI_MODEL` | Gemini model ID | Select a model available to the configured account. |
 | `LLM_TIMEOUT_SECONDS` | Provider request timeout | SDK retries are bounded to transient 5xx responses. |
@@ -48,7 +48,7 @@ Copy `.env.example` to `.env` for local Compose use. `.env` is ignored by Git. R
 
 The Compose URLs use distinct owner and read-only credentials on a fresh local database. Percent-encode reserved URL characters if using a password in a SQLAlchemy URL. For an existing initialized database, changing either password does not change PostgreSQL roles: rotate the `app` and `analytics_readonly` role passwords explicitly and update both URLs before enabling password authentication.
 
-Production configuration rejects SQLite URLs and the deterministic mock provider. Use PostgreSQL and a configured Gemini or OpenAI provider; mock mode remains available in development and test environments.
+Production configuration rejects SQLite URLs and the deterministic mock provider. Use PostgreSQL and a configured Gemini provider; mock mode remains available in development and test environments.
 
 ## Docker Compose
 
@@ -115,11 +115,8 @@ Rate limiting, metrics, and conversations are process-local. Multi-instance depl
 |---|---|---|
 | `CONVERSATION_STORE` | `memory` or `postgres` (durable, shared by replicas; needs migrations) | `memory`; Compose uses `postgres` |
 | `CONVERSATION_TTL_DAYS`, `CONVERSATION_MAX_PER_OWNER`, `CONVERSATION_MAX_TURNS` | retention and caps | 30, 200, 8 |
-| `RATE_LIMIT_BACKEND`, `REDIS_URL`, `RATE_LIMIT_FAIL_MODE` | `memory` or `redis`; `open` or `closed` when Redis is down | `memory`, unset, `open` |
-| `SQL_CACHE_ENABLED`, `SQL_CACHE_TTL_SECONDS`, `SQL_CACHE_MAX_ENTRIES` | prompt-to-SQL cache (SQL only, never rows) | off |
 | `QUERY_COST_LIMIT` | reject plans above this PostgreSQL cost; empty disables | 1,000,000 |
 | `AUDIT_SINK`, `AUDIT_RETENTION_DAYS` | `log`, `database`, or `both` | `log`; Compose `both`; 365 |
-| `OTEL_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT` | optional tracing (`pip install ".[tracing]"`) | off |
-| `<SECRET>_FILE` | read `DATABASE_URL`, `ANALYTICS_DATABASE_URL`, `GEMINI_API_KEY`, `OPENAI_API_KEY`, `AUTH_STATIC_TOKEN`, `JWT_SECRET`, `JWT_PUBLIC_KEY`, `METRICS_TOKEN`, or `REDIS_URL` from a file | setting both is a startup error |
+| `<SECRET>_FILE` | read `DATABASE_URL`, `ANALYTICS_DATABASE_URL`, `GEMINI_API_KEY`, `AUTH_STATIC_TOKEN`, `JWT_SECRET`, `JWT_PUBLIC_KEY`, or `METRICS_TOKEN` from a file | setting both is a startup error |
 
-Compose adds a one-shot `migrate` service (the backend waits for it), plus `seed` (profile `demo`), `purge` (profile `ops`), and `redis` (profile `redis`). Readiness (`/health/ready`) returns 503 only for required dependencies and 200 with `{"status": "degraded"}` for optional ones. Operating, releasing, rolling back, and incident response: [operations.md](operations.md). Kubernetes examples: `ops/kubernetes/`.
+Compose adds a one-shot `migrate` service (the backend waits for it), plus `seed` (profile `demo`) and `purge` (profile `ops`). Readiness (`/health/ready`) returns 503 only for required dependencies and 200 with `{"status": "degraded"}` for optional ones. Operating, releasing, rolling back, and incident response: [operations.md](operations.md).

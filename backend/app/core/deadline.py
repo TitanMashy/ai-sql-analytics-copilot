@@ -3,10 +3,6 @@ from __future__ import annotations
 from time import monotonic
 
 
-class RequestDeadlineExceeded(Exception):
-    """Raised when the overall request time budget is spent."""
-
-
 class Deadline:
     """A monotonic time budget shared by every step of one request.
 
@@ -24,7 +20,3 @@ class Deadline:
     def expired(self) -> bool:
         remaining = self.remaining()
         return remaining is not None and remaining <= 0
-
-    def check(self) -> None:
-        if self.expired():
-            raise RequestDeadlineExceeded

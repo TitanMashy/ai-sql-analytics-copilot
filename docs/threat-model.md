@@ -43,7 +43,7 @@ browser -> frontend proxy -> backend -> validator -> read-only transaction -> an
 | 8 | Conversation hijack or injection | conversations are owner-scoped and 404 for others; clients can only add `user` turns; failed attempts are never stored; TTL and caps | a stolen token reads that user's own conversations |
 | 9 | Credential theft | secrets via files, never in the environment or images; startup errors never print values; rotation runbook | a stolen JWT is valid until it expires (there is no revocation list) |
 | 10 | Log and audit leakage | no questions, SQL, tokens, or URLs in logs; audit stores a SQL hash, not SQL; spans carry no content; metrics labels are bounded | operators with log access still see principal ids and request ids |
-| 11 | Supply chain | dependency pinning by range with a generated lockfile, `pip-audit`, `npm audit`, image scanning, Dependabot, immutable release tags with SBOMs | zero-days |
+| 11 | Supply chain | dependency pinning by range with a generated lockfile, `pip-audit`, `npm audit`, image scanning, Dependabot | zero-days |
 | 12 | Browser-side attacks | CSP, frame denial, `nosniff`, referrer policy; result and SQL text rendered as text; CSV export neutralizes spreadsheet formulas | the CSP allows inline scripts because Next.js emits them; tighten with nonces |
 | 13 | Data loss | backups with a scripted restore drill; migrations are expand-only before contract | restore time depends on data size |
 

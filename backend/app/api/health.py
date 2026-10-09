@@ -2,9 +2,8 @@
 
 * ``/health`` (liveness, in ``main``): the process is up; touches no dependency.
 * ``/health/ready`` (readiness): can this instance serve traffic? Required dependencies (the
-  application and analytics databases, and the rate limiter when it is configured to fail closed)
-  return 503 when unavailable. Optional or degradable dependencies (an unconfigured LLM provider, an
-  unreachable Redis while failing open) keep the instance in service and are reported as
+  application and analytics databases) return 503 when unavailable. Optional or degradable
+  dependencies (an unconfigured LLM provider) keep the instance in service and are reported as
   ``{"status": "degraded", "degraded": [...]}`` with HTTP 200, so an orchestrator never restarts a
   healthy container because a provider is down.
 * ``/health/diagnostics``: a detailed, operator-only view (needs the operator token).
@@ -23,7 +22,6 @@ from sqlalchemy.orm import Session
 
 from app.analytics.dependencies import get_analytics_query_service
 from app.analytics.service import AnalyticsQueryService
-from app.core import rate_limit
 from app.core.config import Settings, get_settings
 from app.core.ops_auth import authorize_operator
 from app.db.session import get_db
@@ -57,14 +55,7 @@ def _provider_configured(settings: Settings) -> bool:
     return {
         "mock": True,
         "gemini": _secret_present(settings.gemini_api_key),
-        "openai": _secret_present(settings.openai_api_key),
     }.get(settings.llm_mode, False)
-
-
-def _rate_limiter_ping() -> float | None:
-    """Seconds for a Redis round trip, or ``None`` when the limiter is in-process."""
-    ping = getattr(rate_limit.rate_limiter, "ping", None)
-    return ping() if callable(ping) else None
 
 
 @router.get("/health/ready")
@@ -94,20 +85,6 @@ def readiness_check(
     degraded: list[str] = []
     if not _provider_configured(settings):
         degraded.append("llm_provider")
-    try:
-        _rate_limiter_ping()
-    except Exception as error:  # Redis unreachable (any client error)
-        logger.warning(
-            "Rate limiter backend readiness check failed",
-            extra={"error_type": type(error).__name__},
-        )
-        if settings.rate_limit_fail_mode == "closed":
-            # Requests cannot be admitted without the limiter, so this instance cannot serve.
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="A required dependency is unavailable.",
-            ) from error
-        degraded.append("rate_limiter")
 
     if degraded:
         return {"status": "degraded", "degraded": degraded}
@@ -162,7 +139,6 @@ def diagnostics(
         db.rollback()
         revision = None
 
-    rate_limiter_check = _timed(_rate_limiter_ping)
     return JSONResponse(
         {
             "version": settings.app_version,
@@ -171,7 +147,6 @@ def diagnostics(
             "checks": {
                 "application_database": _timed(application_database),
                 "analytics_database": _timed(analytics_database),
-                "rate_limiter": {"backend": settings.rate_limit_backend, **rate_limiter_check},
                 "llm_provider": {
                     "mode": settings.llm_mode,
                     "configured": _provider_configured(settings),
@@ -184,11 +159,7 @@ def diagnostics(
             "features": {
                 "auth_mode": settings.auth_mode,
                 "conversation_store": settings.conversation_store,
-                "rate_limit_backend": settings.rate_limit_backend,
-                "rate_limit_fail_mode": settings.rate_limit_fail_mode,
-                "sql_cache_enabled": settings.sql_cache_enabled,
                 "audit_sink": settings.audit_sink,
-                "tracing_enabled": settings.otel_enabled,
                 "query_cost_limit": settings.query_cost_limit,
                 "direct_sql_endpoints": settings.direct_sql_endpoints_enabled,
             },

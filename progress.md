@@ -43,7 +43,7 @@ Implemented capabilities:
 - Business metric definitions for revenue, active vehicles, completed trips, fuel cost, idle time, and payments.
 - Gemini provider using the official `google-genai` SDK and structured JSON output.
 - Deterministic mock provider for development and CI without an API key.
-- Shared provider interface with legacy OpenAI provider compatibility still present in the codebase.
+- Shared provider interface with Gemini and the deterministic mock provider (the legacy OpenAI provider was removed).
 - PostgreSQL AST parsing and security validation with SQLGlot.
 - Explicit application-table allowlist and practical column/alias validation.
 - Read-only analytics database role and permission verification.
@@ -363,7 +363,7 @@ Values below are documented formats only. Real values belong in ignored `.env`, 
 | `ANALYTICS_DATABASE_PASSWORD` | Fresh Compose database | Distinct read-only role password; supply at runtime only. |
 | `GEMINI_API_KEY` | Only when `LLM_MODE=gemini` | Google Gemini credential; never print or commit it. |
 | `GEMINI_MODEL` | No; default `gemini-2.5-flash` | Gemini model name. |
-| `LLM_MODE` | No; default `mock` | `mock`, `gemini`, or legacy `openai`; mock is disabled in production. |
+| `LLM_MODE` | No; default `mock` | `mock` or `gemini`; mock is disabled in production. |
 | `LOG_LEVEL` | No; default `INFO` | Structured application log threshold. |
 | `LLM_TIMEOUT_SECONDS` | No; default `30` | Provider timeout; transient Gemini 5xx retries are bounded. |
 | `DATABASE_POOL_SIZE` | No; default `5` | SQLAlchemy pool size per engine. |
@@ -384,7 +384,7 @@ Values below are documented formats only. Real values belong in ignored `.env`, 
 | `RATE_LIMIT_REQUESTS` | No; default `30` | Requests allowed per endpoint/client window. |
 | `RATE_LIMIT_WINDOW_SECONDS` | No; default `60` | Sliding window duration. |
 
-The code also retains legacy `OPENAI_API_KEY` and `OPENAI_MODEL` settings/provider compatibility from earlier work, but the current documented/configured provider path is Gemini. Do not add those legacy secrets to new deployments unless deliberately reactivating that provider.
+The legacy OpenAI provider and its `OPENAI_API_KEY` / `OPENAI_MODEL` settings were removed; Gemini and the deterministic mock are the only providers.
 
 ## 14. Testing
 
@@ -505,7 +505,6 @@ Implemented from `sprints.md` (S11-01 to S11-22); nothing was executed when it w
 - **Gemini availability is external:** a valid key/model can still receive provider-side capacity errors such as 503; API errors are handled without executing SQL.
 - **Schema retrieval is keyword-ordered:** the full schema is sent by default (11 tables); narrowed keyword retrieval remains for larger schemas. No embeddings or vector store exist.
 - **No cloud deployment or external observability platform:** deployment is documented for Docker Compose; logs/metrics are local to the application process.
-- **Legacy OpenAI compatibility remains in code:** Gemini is the current configured path; do not remove or rewire providers without an explicit requirement.
 
 ## 17. Future Improvements
 
@@ -593,11 +592,11 @@ No secrets, API keys, passwords, or token values belong in this file.
 
 Written without running anything; the stabilization pass in section 22 later executed the backend, frontend, PostgreSQL/Redis integration and Docker Compose paths. Items that still need a real environment are listed there under "Not run".
 
-- State: `ConversationStore` interface with in-memory and PostgreSQL implementations (`app/conversation/sql_store.py`, migration `c3d91e5a7b20`, operational tables on their own base); `RateLimiter` interface with Redis implementation; optional SQL cache; `python -m app.jobs.purge`.
+- State: `ConversationStore` interface with in-memory and PostgreSQL implementations (`app/conversation/sql_store.py`, migration `c3d91e5a7b20`, operational tables on their own base); optional SQL cache; `python -m app.jobs.purge`.
 - Safety: `EXPLAIN` cost pre-flight (`QUERY_COST_LIMIT`), `*_FILE` secrets with value-free startup errors, demo seed refuses production, validator now catches tokenizer/recursion errors.
-- Observability: Prometheus metrics (`/api/v1/metrics/prometheus`), optional OpenTelemetry, audit trail, readiness `degraded` semantics, operator diagnostics.
-- Quality: PostgreSQL+Redis integration CI, golden evaluation suite (76 cases, `backend/evals`), validator fuzzing, coverage gates, mypy, supply-chain scans, Playwright+axe e2e, API contract test.
-- Ops: alerts, SLO rules, Grafana dashboard, five runbooks, Kubernetes examples, k6 load test, release workflow, smoke test, backup/restore/drill scripts, `docs/operations.md`, `evaluation.md`, `slos.md`, `capacity.md`, `threat-model.md`.
+- Observability: Prometheus metrics (`/api/v1/metrics/prometheus`), audit trail, readiness `degraded` semantics, operator diagnostics.
+- Quality: PostgreSQL integration CI, golden evaluation suite (76 cases, `backend/evals`), validator fuzzing, coverage gates, mypy, supply-chain scans, Playwright+axe e2e, API contract test.
+- Ops: alerts, SLO rules, Grafana dashboard, five runbooks, k6 load test, smoke test, backup/restore/drill scripts, `docs/operations.md`, `evaluation.md`, `slos.md`, `capacity.md`, `threat-model.md`.
 - Frontend: result kept per message, restore on reload, delete, feedback, examples panel, pagination, CSV export, 401/429/504/422 states, schema-validated responses.
 - Pending real-environment evidence: first evaluation baseline against Gemini, load-test saturation numbers, restore drill, rollback rehearsal, `make lock` (no `requirements.lock` yet). `ruff format` and the mypy cleanup were completed in section 22.
 
@@ -682,6 +681,10 @@ Integration tests need PostgreSQL with the `analytics_readonly` role (run `datab
 ### Mock-provider demonstration
 
 With `LLM_MODE=mock`, the mock provider answers five questions deterministically: "What is the total number of active vehicles?", "What were the top 10 customers by revenue?", "Show monthly revenue for the last 12 months.", "Which vehicles had the highest idle time?", "Show fuel consumption by vehicle.". Ask them in the dashboard, or `POST /api/v1/analytics/ask` with `{"question": "..."}`.
+
+### Simplification since this checkpoint
+
+Dead code, the OpenAI provider, the SQL cache, OpenTelemetry tracing, the Redis rate limiter, and the Kubernetes/release pipeline have been removed, each in its own commit and verified. The decisions behind them, what remains pending, and the checks run are in `docs/Sequence.md` section 18. The section 22 results above describe the state before those removals.
 
 ### Files to study next
 

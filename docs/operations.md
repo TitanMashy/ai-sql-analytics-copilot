@@ -24,16 +24,14 @@ local development see the README; for the settings reference see [deployment.md]
 | Component | Role | State |
 |---|---|---|
 | Frontend (Next.js) | UI and a same-origin proxy that forwards only the routes the UI uses | none |
-| Backend (FastAPI), 1..N replicas | auth, rate limiting, generation, validation, execution | none when `CONVERSATION_STORE=postgres` and `RATE_LIMIT_BACKEND=redis`; otherwise per process |
+| Backend (FastAPI), 1..N replicas | auth, rate limiting, generation, validation, execution | none when `CONVERSATION_STORE=postgres`; otherwise per process |
 | PostgreSQL | fleet data, `analytics` views, conversations, audit log | durable |
-| Redis (optional) | shared rate-limit counters | disposable |
 | LLM provider | SQL generation | external |
 | Prometheus / Grafana / log store (yours) | metrics, dashboards, logs | external |
 
-Per-process state is the reason the defaults differ from the multi-replica recommendation:
-`memory` conversations and `memory` rate limiting are correct for **one** instance and wrong for
-several (a restart or a different replica loses the conversation; each replica enforces its own
-limit). Run several replicas only with `CONVERSATION_STORE=postgres` and `RATE_LIMIT_BACKEND=redis`.
+Rate limiting is per process, so the supported deployment is a **single** backend instance (several
+replicas would each enforce their own limit). `CONVERSATION_STORE=postgres` keeps conversations
+across restarts.
 
 ## Fresh-environment walkthrough
 
@@ -60,37 +58,33 @@ cd backend && python -m evals.run_eval --check-references   # dataset runs on th
 cd backend && python -m evals.run_eval --provider mock --subset mock
 ```
 
-Optional stacks: `--profile redis` (shared rate limiter), `-f docker-compose.dev.yml` (backend on
+Optional stacks: `-f docker-compose.dev.yml` (backend on
 `127.0.0.1:8000`), `-f docker-compose.loadtest.yml` (see [capacity.md](capacity.md)). For a real
 model set `LLM_MODE=gemini` and `GEMINI_API_KEY` (or `GEMINI_API_KEY_FILE`).
 
-For a production-shaped deployment use [`ops/kubernetes/analytics-backend.yaml`](../ops/kubernetes/analytics-backend.yaml)
-as the starting point, with `APP_ENV=production`, `AUTH_MODE=jwt`, `CONVERSATION_STORE=postgres`,
-`RATE_LIMIT_BACKEND=redis`, `AUDIT_SINK=both`, and every secret as a `*_FILE`.
+For a production-shaped deployment run the Compose stack on a host with `APP_ENV=production`, `AUTH_MODE=jwt`, `CONVERSATION_STORE=postgres`,
+`AUDIT_SINK=both`, and every secret as a `*_FILE`.
 
 ## Health and probes
 
 | Endpoint | Meaning | Use it for | Never fails because of |
 |---|---|---|---|
 | `GET /health` | the process is up | liveness probe | any dependency |
-| `GET /health/ready` (also `/api/v1/health/ready`) | this instance can serve | readiness probe, load balancer, Compose healthcheck | an unconfigured LLM key, or Redis while failing open |
+| `GET /health/ready` (also `/api/v1/health/ready`) | this instance can serve | readiness probe, load balancer, Compose healthcheck | an unconfigured LLM key |
 | `GET /api/v1/health/diagnostics` | dependency latency, pool state, migration revision, enabled features | operators (needs `METRICS_TOKEN`) | not a probe |
 
-Readiness returns **503** when the application database, the analytics database, or (with
-`RATE_LIMIT_FAIL_MODE=closed`) the rate limiter is unreachable. It returns **200** with
-`{"status": "degraded", "degraded": [...]}` when something optional is unavailable: `llm_provider`
-(no API key configured) or `rate_limiter` (Redis down while failing open). An orchestrator therefore
+Readiness returns **503** when the application database or the analytics database is unreachable.
+It returns **200** with `{"status": "degraded", "degraded": [...]}` when something optional is
+unavailable: `llm_provider` (no API key configured). An orchestrator therefore
 keeps a degraded instance in service rather than restarting it for something a restart cannot fix;
-alerts, not probes, are how degradation is noticed. The Compose and Kubernetes examples encode this:
+alerts, not probes, are how degradation is noticed. The Compose healthchecks encode this:
 liveness never touches a dependency.
 
 ## Migrations
 
 **Migrations run as a one-shot job, never at application start.** In Compose the `migrate` service
-runs `alembic upgrade head` and the backend waits for it (`service_completed_successfully`); in
-Kubernetes it is a `Job` applied before the rollout. This means scaling the backend to ten replicas
-runs one migration, not ten racing ones, and a failed migration stops the deploy before any new code
-serves traffic.
+runs `alembic upgrade head` and the backend waits for it (`service_completed_successfully`). A failed
+migration stops the deploy before any new code serves traffic.
 
 ### Expand and contract
 
@@ -115,7 +109,7 @@ touches a fleet table, run `make verify-permissions` and `pytest -m integration`
 ### Upgrading a cluster
 
 ```bash
-docker compose run --rm migrate          # or the Kubernetes Job
+docker compose run --rm migrate
 docker compose exec postgres psql -U app -d app -c "SELECT version_num FROM alembic_version"
 make verify-permissions
 ```
@@ -126,8 +120,8 @@ Capacity is bounded by connection pools, not CPU: an `/ask` holds an **analytics
 while its SQL runs (milliseconds to seconds), not while the LLM thinks (seconds). Measure with
 [capacity.md](capacity.md) and size from the result.
 
-- **Replicas:** add backend replicas for more concurrent LLM calls. Use
-  `CONVERSATION_STORE=postgres` and `RATE_LIMIT_BACKEND=redis` first.
+- **Replicas:** the rate limiter is per process, so each replica would enforce its own limit;
+  raise uvicorn workers on a single instance before adding replicas.
 - **Pools:** per replica, the analytics engine may hold `DATABASE_POOL_SIZE + DATABASE_MAX_OVERFLOW`
   (default 15) connections and the application engine the same. Keep
   `replicas x 2 x (pool + overflow)` below PostgreSQL's `max_connections` minus headroom for
@@ -135,8 +129,6 @@ while its SQL runs (milliseconds to seconds), not while the LLM thinks (seconds)
   (The executor sets transaction-local settings only, so transaction pooling is safe.)
 - **Concurrency:** each in-flight `/ask` occupies a threadpool worker (default 40 in Starlette) and a
   provider thread (16). Raise uvicorn workers or replicas before raising those limits.
-- **Redis:** one small instance is enough; keys are one sorted set per principal and route family,
-  each expiring with the window.
 - **Query cost:** `QUERY_COST_LIMIT` (planner cost units, default 1,000,000) rejects runaway plans
   before they run. Re-derive it from `EXPLAIN` costs of your heaviest legitimate queries when the
   data volume changes.
@@ -144,9 +136,9 @@ while its SQL runs (milliseconds to seconds), not while the LLM thinks (seconds)
 ## Secrets and rotation
 
 Provide secrets as files (`DATABASE_URL_FILE`, `ANALYTICS_DATABASE_URL_FILE`, `GEMINI_API_KEY_FILE`,
-`JWT_SECRET_FILE`, `JWT_PUBLIC_KEY_FILE`, `METRICS_TOKEN_FILE`, `REDIS_URL_FILE`, ...): Docker/Compose
-`secrets:`, Kubernetes `Secret` volumes, or a secret-manager agent that renders files. A file keeps
-the value out of `docker inspect`, `kubectl describe`, and the process environment. Setting both
+`JWT_SECRET_FILE`, `JWT_PUBLIC_KEY_FILE`, `METRICS_TOKEN_FILE`, ...): Docker/Compose
+`secrets:`, or a secret-manager agent that renders files. A file keeps
+the value out of `docker inspect` and the process environment. Setting both
 `NAME` and `NAME_FILE` is a startup error, so a rotated file can never be shadowed by a stale
 variable.
 
@@ -173,9 +165,6 @@ suspected exposure.
   request ids are never labels.
 - **Dashboards and alerts:** `ops/grafana/dashboard.json`, `ops/prometheus/alerts.yml`,
   `ops/prometheus/slo-rules.yml`; objectives in [slos.md](slos.md).
-- **Tracing (optional):** `OTEL_ENABLED=true` plus `OTEL_EXPORTER_OTLP_ENDPOINT`; install with
-  `pip install ".[tracing]"`. Spans: `http.request` -> `llm.call`, `sql.validate`, `sql.execute`,
-  carrying the request id, provider, row count, and status. Never question text or SQL.
 - **Logs:** structured JSON with request id, conversation id, endpoint, durations, repair count,
   status; no questions, SQL, tokens, or URLs.
 - **Audit trail** (`AUDIT_SINK=log|database|both`): one event per `/ask` and per feedback with
@@ -187,8 +176,8 @@ suspected exposure.
 
 ## Backup and restore
 
-What needs backing up: the PostgreSQL database (fleet data, conversations, audit log). Redis, the
-metrics, and the containers are disposable. Secrets live in your secret store.
+What needs backing up: the PostgreSQL database (fleet data, conversations, audit log). The
+metrics and the containers are disposable. Secrets live in your secret store.
 
 ```bash
 scripts/backup_postgres.sh                 # compressed pg_dump -Fc archive, verified with pg_restore --list
@@ -214,7 +203,7 @@ scripts/restore_postgres.sh <dump> <db>    # restore (defaults to the scratch da
 python -m app.jobs.purge        # {"conversations_purged": N, "audit_records_purged": M}
 ```
 
-Run it daily (the Kubernetes CronJob and `docker compose --profile ops run --rm purge` do). It
+Run it daily (`docker compose --profile ops run --rm purge`, scheduled with cron or similar). It
 deletes conversations idle longer than `CONVERSATION_TTL_DAYS` (default 30) and audit rows older than
 `AUDIT_RETENTION_DAYS` (default 365). Users can delete their own conversations from the UI
 (`DELETE /api/v1/analytics/conversations/{id}`). The demo seed never runs in production.
@@ -250,39 +239,31 @@ weekly update PRs for pip, npm (frontend and e2e), Docker, and GitHub Actions.
 
 ## Release process
 
-Releases are tag-driven (`.github/workflows/release.yml`):
+Releases are manual and Compose-based:
 
-1. Merge to `main` with CI green. Tag with semantic versioning: `git tag v1.2.0 && git push --tags`.
-2. The workflow runs the test suites, builds both images, scans them (Trivy), pushes them to the
-   registry as `ghcr.io/<owner>/analytics-backend:1.2.0` and `...-frontend:1.2.0` (immutable
-   version tags plus the commit digest), attaches an SBOM to each image, and publishes release notes
-   generated from conventional commits (`scripts/release_notes.py`).
-3. **Staging:** the workflow deploys the tagged images, runs the migration job, and runs
-   `scripts/smoke_test.py` (liveness, readiness, and one authenticated `/ask`).
-4. **Production:** a protected environment (manual approval) deploys the same images; the migration
-   job runs first; the smoke test runs again. A failed smoke test marks the release failed and does
-   not leave a half-promoted state: the previous version keeps serving until the new pods are ready
-   (`maxUnavailable: 0`).
-5. After promotion, watch the dashboard for 30 minutes: availability, latency, answer rate.
+1. Merge to `main` with CI green and tag the commit (`git tag v1.2.0 && git push --tags`).
+2. On the host, check out the tag and start it: `git checkout v1.2.0 && docker compose up --build -d`.
+   The `migrate` service runs first (see Migrations); the backend starts only after it succeeds.
+3. Run `python scripts/smoke_test.py --base-url <url> --token <token>` (liveness, readiness, and one
+   authenticated `/ask`).
+4. After promotion, watch the dashboard for 30 minutes: availability, latency, answer rate.
 
-Deployment targets are not configured in the repository because they depend on your platform; the
-workflow's deploy steps call `scripts/deploy.sh <environment> <version>` hooks you provide, so the
-pipeline's gating, smoke testing, and notes work unchanged on Kubernetes, Compose hosts, or a PaaS.
+CI builds and scans both images on every push, so a tag that passed CI builds the same images.
 
 ## Rollback
 
-Rolling back means deploying the previous immutable tag. Because migrations are expand-only until
-the old version is retired, the previous version still works against the migrated database.
+Rolling back means redeploying the previous tag. Because migrations are expand-only until the old
+version is retired, the previous version still works against the migrated database.
 
 1. Identify the last good tag (`git tag --sort=-creatordate | head`).
-2. Redeploy it (`scripts/deploy.sh production v1.1.0`, or `kubectl set image ...`). Do **not** run
+2. Check it out and redeploy: `git checkout <tag> && docker compose up --build -d`. Do **not** run
    `alembic downgrade` unless the new release included a contracting migration and you have a
    database backup; downgrades can destroy data.
 3. Run `python scripts/smoke_test.py --base-url <url> --token <token>`.
 4. Open an incident review: what failed, why CI did not catch it, which test now will.
 
-**Rehearse the rollback** at least once per quarter in staging (deploy N, then N-1, smoke test) and
-record it with the restore drills. A rollback that has never been run is untested.
+**Rehearse the rollback** at least once per quarter (deploy N, then N-1, smoke test) and record it
+with the restore drills. A rollback that has never been run is untested.
 
 ## Incident response
 

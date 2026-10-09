@@ -85,15 +85,6 @@ groups:
           description: "Either the model is producing unbounded queries or QUERY_COST_LIMIT is too low for the data volume."
           runbook: docs/runbooks/database-saturation.md
 
-      - alert: AnalyticsRateLimiterBackendFailing
-        expr: sum(increase(analytics_rate_limiter_failures_total[5m])) > 0
-        labels:
-          severity: page
-        annotations:
-          summary: "The shared rate limiter backend (Redis) is failing"
-          description: "With RATE_LIMIT_FAIL_MODE=open limits are not enforced; with closed, requests are refused."
-          runbook: docs/runbooks/rate-limit-storm.md
-
   - name: analytics-abuse
     rules:
       - alert: AnalyticsRateLimitStorm

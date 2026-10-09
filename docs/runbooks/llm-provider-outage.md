@@ -43,9 +43,7 @@ provider failure, so there is no data risk. Questions already answered are not a
 
 - **Provider down:** nothing in this service can substitute a model. Tell users (banner or status
   channel) and wait; the service recovers by itself when the provider does.
-- **Quota exhausted:** raise the provider quota, lower `RATE_LIMIT_LLM_REQUESTS` to shed load, or
-  enable `SQL_CACHE_ENABLED=true` so repeated questions skip the model (a cache hit still runs the
-  SQL against the caller's tenant-scoped data).
+- **Quota exhausted:** raise the provider quota or lower `RATE_LIMIT_LLM_REQUESTS` to shed load.
 - **Provider slow, not down:** lower `LLM_TIMEOUT_SECONDS` so requests fail fast instead of tying up
   threads, and keep `REQUEST_DEADLINE_SECONDS` below the frontend timeout (30 s).
 - **Bad model or prompt rollout:** roll back to the previous release tag (see
@@ -63,6 +61,5 @@ provider failure, so there is no data risk. Questions already answered are not a
 
 ## Follow-up
 
-Record the timeline and the provider's incident reference. If an outage repeated, consider the
-`SQL_CACHE_ENABLED` setting, a second provider key in a different project, or a lower
-`REQUEST_DEADLINE_SECONDS`.
+Record the timeline and the provider's incident reference. If an outage repeated, consider a
+second provider key in a different project or a lower `REQUEST_DEADLINE_SECONDS`.

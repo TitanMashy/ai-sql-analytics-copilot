@@ -26,17 +26,11 @@ class Settings(BaseSettings):
         validation_alias="ANALYTICS_DATABASE_URL",
         repr=False,
     )
-    openai_api_key: SecretStr | None = Field(
-        default=None, validation_alias="OPENAI_API_KEY", repr=False
-    )
-    openai_model: str = Field(default="gpt-4o-mini", validation_alias="OPENAI_MODEL")
     gemini_api_key: SecretStr | None = Field(
         default=None, validation_alias="GEMINI_API_KEY", repr=False
     )
     gemini_model: str = Field(default="gemini-2.5-flash", validation_alias="GEMINI_MODEL")
-    llm_mode: Literal["mock", "gemini", "openai"] = Field(
-        default="mock", validation_alias="LLM_MODE"
-    )
+    llm_mode: Literal["mock", "gemini"] = Field(default="mock", validation_alias="LLM_MODE")
     environment: Literal["development", "test", "production"] = Field(
         default="development", validation_alias="APP_ENV"
     )
@@ -124,20 +118,6 @@ class Settings(BaseSettings):
         default=8, gt=0, le=100, validation_alias="CONVERSATION_MAX_TURNS"
     )
 
-    # Shared rate limiting ---------------------------------------------------------------------
-    rate_limit_backend: Literal["memory", "redis"] = Field(
-        default="memory", validation_alias="RATE_LIMIT_BACKEND"
-    )
-    redis_url: SecretStr | None = Field(default=None, validation_alias="REDIS_URL", repr=False)
-    rate_limit_fail_mode: Literal["open", "closed"] = Field(
-        default="open", validation_alias="RATE_LIMIT_FAIL_MODE"
-    )
-
-    # Prompt-to-SQL cache (off by default) -----------------------------------------------------
-    sql_cache_enabled: bool = Field(default=False, validation_alias="SQL_CACHE_ENABLED")
-    sql_cache_ttl_seconds: int = Field(default=300, gt=0, validation_alias="SQL_CACHE_TTL_SECONDS")
-    sql_cache_max_entries: int = Field(default=1000, gt=0, validation_alias="SQL_CACHE_MAX_ENTRIES")
-
     # Query cost pre-flight (PostgreSQL planner cost units; unset disables it) ----------------
     query_cost_limit: float | None = Field(default=1_000_000.0, validation_alias="QUERY_COST_LIMIT")
 
@@ -150,18 +130,11 @@ class Settings(BaseSettings):
         default=0, ge=0, le=60_000, validation_alias="MOCK_LLM_JITTER_MS"
     )
 
-    # Audit and tracing ------------------------------------------------------------------------
+    # Audit ------------------------------------------------------------------------
     audit_sink: Literal["log", "database", "both"] = Field(
         default="log", validation_alias="AUDIT_SINK"
     )
     audit_retention_days: int = Field(default=365, gt=0, validation_alias="AUDIT_RETENTION_DAYS")
-    otel_enabled: bool = Field(default=False, validation_alias="OTEL_ENABLED")
-    otel_exporter_otlp_endpoint: str | None = Field(
-        default=None, validation_alias="OTEL_EXPORTER_OTLP_ENDPOINT"
-    )
-    otel_service_name: str = Field(
-        default="analytics-copilot", validation_alias="OTEL_SERVICE_NAME"
-    )
 
     @field_validator("cors_allowed_origins", mode="before")
     @classmethod
@@ -250,10 +223,6 @@ class Settings(BaseSettings):
             self.auth_static_token and self.auth_static_token.get_secret_value().strip()
         ):
             raise ValueError("AUTH_STATIC_TOKEN is required when AUTH_MODE=static.")
-        if self.rate_limit_backend == "redis" and not (
-            self.redis_url and self.redis_url.get_secret_value().strip()
-        ):
-            raise ValueError("REDIS_URL is required when RATE_LIMIT_BACKEND=redis.")
         if self.conversation_store == "postgres" and not self.database_url.startswith("postgresql"):
             raise ValueError("CONVERSATION_STORE=postgres requires a PostgreSQL DATABASE_URL.")
         if self.audit_sink in {"database", "both"} and not self.database_url.startswith(
@@ -279,12 +248,10 @@ FILE_SECRETS: dict[str, str] = {
     "DATABASE_URL": "database_url",
     "ANALYTICS_DATABASE_URL": "analytics_database_url",
     "GEMINI_API_KEY": "gemini_api_key",
-    "OPENAI_API_KEY": "openai_api_key",
     "AUTH_STATIC_TOKEN": "auth_static_token",
     "JWT_SECRET": "jwt_secret",
     "JWT_PUBLIC_KEY": "jwt_public_key",
     "METRICS_TOKEN": "metrics_token",
-    "REDIS_URL": "redis_url",
 }
 
 
