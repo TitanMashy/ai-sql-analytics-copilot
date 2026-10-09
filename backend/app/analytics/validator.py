@@ -289,6 +289,13 @@ class SQLValidator:
         if expression.key not in {"select", "union", "intersect", "except"}:
             errors.append("Only SELECT statements are permitted.")
             error_code = "QUERY_SECURITY_ERROR"
+        elif any(
+            isinstance(node, exp.Select) and not node.expressions for node in expression.walk()
+        ):
+            # sqlglot accepts a bare ``SELECT`` (also as a subquery, or after ``FROM``); the LIMIT
+            # rewrite would then emit invalid SQL.
+            errors.append("Every SELECT must select at least one column.")
+            repairable = True
 
         forbidden_nodes = [node for node in expression.walk() if node.key in FORBIDDEN_NODE_KEYS]
         if forbidden_nodes:
@@ -363,7 +370,9 @@ class SQLValidator:
             if limit_warning:
                 warnings.append(limit_warning)
 
-        normalized_sql = expression.sql(dialect="postgres")
+        # Comments are dropped: they carry nothing the database needs, and some are not
+        # re-parseable once the statement has been rewritten.
+        normalized_sql = expression.sql(dialect="postgres", comments=False)
         return ValidationResult(
             not errors,
             normalized_sql,
