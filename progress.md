@@ -595,7 +595,7 @@ Written without running anything; the stabilization pass in section 22 later exe
 - State: `ConversationStore` interface with in-memory and PostgreSQL implementations (`app/conversation/sql_store.py`, migration `c3d91e5a7b20`, operational tables on their own base); optional SQL cache; `python -m app.jobs.purge`.
 - Safety: `EXPLAIN` cost pre-flight (`QUERY_COST_LIMIT`), `*_FILE` secrets with value-free startup errors, demo seed refuses production, validator now catches tokenizer/recursion errors.
 - Observability: Prometheus metrics (`/api/v1/metrics/prometheus`), audit trail, readiness `degraded` semantics, operator diagnostics.
-- Quality: PostgreSQL integration CI, golden evaluation suite (76 cases, `backend/evals`), validator fuzzing, coverage gates, mypy, supply-chain scans, Playwright+axe e2e, API contract test.
+- Quality: PostgreSQL integration CI, golden evaluation suite (76 cases, `backend/evals`), validator fuzzing, coverage gates, mypy, supply-chain scans, API contract test.
 - Ops: alerts, SLO rules, Grafana dashboard, five runbooks, k6 load test, smoke test, backup/restore/drill scripts, `docs/operations.md`, `evaluation.md`, `slos.md`, `capacity.md`, `threat-model.md`.
 - Frontend: result kept per message, restore on reload, delete, feedback, examples panel, pagination, CSV export, 401/429/504/422 states, schema-validated responses.
 - Pending real-environment evidence: first evaluation baseline against Gemini, load-test saturation numbers, restore drill, rollback rehearsal, `make lock` (no `requirements.lock` yet). `ruff format` and the mypy cleanup were completed in section 22.
@@ -649,7 +649,7 @@ The verification stack used its own PostgreSQL and was removed afterwards. The r
 
 ### Not run / blocked
 
-- Playwright + axe end-to-end tests (`make e2e`), the k6 load test, Trivy image scans, `pip-audit`, `npm audit`, and the long fuzz run: not run in this pass.
+- The k6 load test (the Playwright end-to-end suite was removed at the owner's request), Trivy image scans, `pip-audit`, `npm audit`, and the long fuzz run: not run in this pass.
 - Lockfile (`make lock` / `lock-check`): no `backend/requirements.lock` exists; the CI step only warns.
 - JWT authentication and tenant isolation were verified by unit and integration tests only, not by a live JWT request against the Compose stack (the Compose run used `AUTH_MODE=disabled`, which production rejects). **Closed afterwards:** a live JWT run on an isolated Compose stack passed 19 of 19 tenant-isolation checks (see `docs/Sequence.md` section 19).
 - Gemini was verified with two live calls only; it is not part of the deterministic suite. External failures (quota, latency, model changes) are not reproducible tests.
@@ -684,7 +684,7 @@ With `LLM_MODE=mock`, the mock provider answers five questions deterministically
 
 ### Simplification since this checkpoint
 
-Dead code, the OpenAI provider, the SQL cache, OpenTelemetry tracing, the Redis rate limiter, the Kubernetes/release pipeline, and the `static` auth mode have been removed, and `ask` / `execute` were split into smaller methods. The decisions behind each, and the items deliberately kept (metrics duplication, audit and feedback, direct SQL endpoints, evaluation/load/e2e tooling), are in `docs/Sequence.md` sections 18 and 19, and `docs/README.md` indexes the documentation. The section 22 results above describe the state before those changes; the closing verification is in Sequence.md section 19.
+Dead code, the OpenAI provider, the SQL cache, OpenTelemetry tracing, the Redis rate limiter, the Kubernetes/release pipeline, the `static` auth mode, and the Playwright e2e suite have been removed, and `ask` / `execute` were split into smaller methods. The decisions behind each, and the items deliberately kept (metrics duplication, audit and feedback, direct SQL endpoints, evaluation and load-test tooling), are in `docs/Sequence.md` sections 18 and 19, and `docs/README.md` indexes the documentation. The section 22 results above describe the state before those changes; the closing verification is in Sequence.md section 19.
 
 ### Files to study next
 

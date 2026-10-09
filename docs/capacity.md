@@ -95,7 +95,7 @@ Until measured, start from these and adjust with the table above:
 ## Rendering budget (frontend)
 
 A result table renders at most 50 rows at a time (`PAGE_SIZE`), so a 1,000-row answer adds about 50
-table rows to the page regardless of its size. The end-to-end test
-(`e2e/tests/accessibility.spec.ts`) asserts that exactly 51 rows (header plus one page) are in the DOM
-and that a 1,000-row answer is on screen within 5 seconds on a CI runner; on a developer laptop it is
-well under one second. Re-measure with the Playwright trace if the table or chart components change.
+table rows to the page regardless of its size. The frontend unit test
+(`frontend/components/analytics/analytics-results.test.tsx`) asserts that exactly 51 rows (header plus
+one page) are in the DOM for a 1,000-row answer. Re-check the page in a browser profiler if the
+table or chart components change.

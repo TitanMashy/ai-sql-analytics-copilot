@@ -221,7 +221,6 @@ CI (`.github/workflows/ci.yml`) blocks merges on:
 | Fuzz | validator fuzz with a fixed seed on every push; much longer run nightly |
 | Evaluation | `evals.run_eval --provider mock --subset mock` plus `--check-references` against seeded PostgreSQL |
 | Frontend | `eslint`, `vitest`, `next build`, contract test against the backend |
-| End to end | Playwright + axe against the Compose stack in mock mode |
 | Supply chain | `pip-audit`, `npm audit --omit=dev --audit-level=high`, Docker image builds, Trivy image scan (high and critical fail) |
 | Compose | `docker compose config` for the base and override files |
 
@@ -235,7 +234,7 @@ measured values and never lower them to pass a build.**
 
 The backend lockfile is generated, not hand-edited: `make lock` writes `backend/requirements.lock`
 (hash-pinned, from `pyproject.toml`) and CI verifies it is current once it exists. Dependabot opens
-weekly update PRs for pip, npm (frontend and e2e), Docker, and GitHub Actions.
+weekly update PRs for pip, npm (frontend), Docker, and GitHub Actions.
 
 ## Release process
 

@@ -651,7 +651,8 @@ The remaining recommendations were reviewed against your requirements (a working
 | F5 metrics kept twice (JSON `/api/v1/metrics` and Prometheus) | **Keep** | 214 lines in total. The JSON endpoint is token-gated, and several tests read `metrics.snapshot()`; removing it means rewriting tests for no stated requirement. Accepted duplication. |
 | D3 audit trail and feedback | **Keep** | The data-leak runbook and the threat model rely on the audit trail, and the feedback route is small. Removing the table needs a migration for little gain. |
 | D4 direct SQL endpoints (`/analytics/query`, `/validate`) | **Keep** | The smoke and permission tests use them. They are off in production by default and the frontend proxy never forwards them. |
-| D8 evaluation suite, k6 load test, Playwright e2e | **Keep** | You added the load-test port yourself (`440e7b9`) and installed the e2e packages; the evaluation suite and fuzz tests are the best guard on the validator. |
+| D8 evaluation suite and k6 load test | **Keep** | You added the load-test port yourself (`440e7b9`); the evaluation suite and fuzz tests are the best guard on the validator. |
+| Playwright end-to-end suite | **Removed at your request** | The `e2e/` directory, its CI job, the `make e2e` target and its Dependabot entry are gone. Browser-level behaviour is covered by the frontend unit tests, the contract test and the live JWT check. |
 | D7 token issuing | **Document only** | Nothing in this codebase issues production JWTs; that is an identity-provider decision. It is listed under Known Limitations in `progress.md` and `README.md`. |
 | F10, F11 | **No change** | See the earlier entries: not real duplication. |
 
@@ -664,8 +665,10 @@ Run on the final code, after all the changes above:
 | Check | Result |
 |---|---|
 | `ruff check`, `ruff format --check`, `mypy` | Passed |
-| Backend unit tests | 371 passed |
+| Backend unit tests | 378 passed |
 | PostgreSQL integration tests (fresh database, `REQUIRE_INTEGRATION=1`) | 43 passed, 0 skipped |
+| Validator fuzz at the nightly job's size (20,000 iterations) | Passed (it failed before the late fixes below) |
+| `pip-audit` as CI runs it | No known vulnerabilities |
 | Migrations up, down to the first revision, and up again | Passed |
 | Read-only privilege check, evaluation reference check, mock evaluation subset | Passed (76 cases, 0 problems; 5/5 correct, 0 of 4 adversarial leaks) |
 | Frontend lint, tests, production build, `tsc` | Passed (122 tests) |
@@ -674,4 +677,14 @@ Run on the final code, after all the changes above:
 
 The live checks covered: no token, garbage token, expired token, wrong audience and wrong signature all return 401; a non-admin token without a customer returns 403; an admin sees all 766 active vehicles while customer 7 sees 4 and customer 8 sees 11, each matching the database exactly; a cross-customer revenue ranking returns only the caller's own row for a tenant token and the full top 10 for an admin; another customer cannot read or ask inside someone else's conversation; and the proxy returns 404 for the direct SQL and metrics routes even for an admin.
 
-Not run in this sequence: the Playwright end-to-end suite, the k6 load test, Trivy and dependency audits, and a live Gemini call on the final code (Gemini was verified earlier, on the stabilization commit). Run them when you need them; none of the final changes touch what they cover beyond what the checks above exercise.
+### Late findings fixed while closing
+
+Running the checks CI would run (rather than assuming they pass) found three real problems:
+
+1. **The CI dependency audit would have failed.** `pip-audit --strict` errors on the project's own editable install, and `pytest` 8.4 and `pip` carried published advisories (dev and tooling only; no runtime dependency was affected). Fixed: `pytest>=9.0.3,<10.0` in `pyproject.toml` (the suite passes on 9.1), the backend CI job upgrades `pip` first, and the audit runs with `--skip-editable`.
+2. **The validator accepted a `SELECT` that selects nothing** (a bare `SELECT`, `FROM SELECT`, or an empty subquery), and the row-cap rewrite turned it into invalid SQL such as `SELECT LIMIT 1001`. It referenced no table, so it was not a way past the allowlist, but it is now rejected as repairable ("Every SELECT must select at least one column").
+3. **The validator's normalized SQL kept the caller's comments,** and some of them could not be parsed back after rewriting. Comments are now dropped from the SQL that is executed. They carry nothing the database needs.
+
+Findings 2 and 3 came from the nightly-size fuzz run (20,000 iterations), which the default CI run (a few hundred) is too small to reach. Each has a regression test in `tests/test_sql_security.py`.
+
+Not run in this sequence: the k6 load test, Trivy and dependency audits, and a live Gemini call on the final code (Gemini was verified earlier, on the stabilization commit). Run them when you need them; none of the final changes touch what they cover beyond what the checks above exercise.

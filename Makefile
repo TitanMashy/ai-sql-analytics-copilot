@@ -1,5 +1,5 @@
 .PHONY: dev test lint format typecheck coverage fuzz migrate seed verify-permissions \
-	docker-up docker-down lock lock-check eval eval-check e2e loadtest purge backup restore-drill
+	docker-up docker-down lock lock-check eval eval-check loadtest purge backup restore-drill
 
 PYTHON ?= $(if $(wildcard backend/.venv/bin/python),.venv/bin/python,python3)
 
@@ -54,9 +54,6 @@ eval-check:
 
 eval:
 	cd backend && $(PYTHON) -m evals.run_eval --provider $${PROVIDER:-mock} $${SUBSET:+--subset $$SUBSET}
-
-e2e:
-	cd e2e && npm install && npx playwright install --with-deps chromium && npx playwright test
 
 loadtest:
 	k6 run -e BASE_URL=$${BASE_URL:-http://localhost:8000} loadtest/ask.js
