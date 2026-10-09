@@ -638,16 +638,40 @@ Progress:
 - **F10 example-question lists: reviewed, no change.** The finding overstated the duplication. The backend list is the API's source of truth (`/schema/business-definitions`), the frontend `FALLBACK_EXAMPLES` is a deliberate offline fallback for when that call fails, and the composer chips are different short phrases for a different UI element. Merging them would add coupling for no gain.
 - **F11 three descriptions of the response shape: left as is.** The shared `api-contract.json` plus the two contract tests are the safety net that catches backend/frontend drift; removing them would trade a small maintenance cost for silent breakage.
 - **Final verification of steps F6, F7, F4 and F16** (cumulative): ruff, format and mypy pass; 375 backend unit tests pass with `openai` and `redis` uninstalled from the virtual environment; the backend image builds and the app imports and loads the mock provider inside it; 43 PostgreSQL integration tests, the migrations, the privilege check and the evaluation reference check passed on a fresh database after the Redis step (the Kubernetes/release step changed no runtime code). `opentelemetry-api` still appears in the environment because FastAPI itself depends on it; this project no longer imports it.
+- **F9 `static` auth mode: removed.** Only unit tests used it, production rejected it, and `scripts/issue_token.py` already allows real JWT auth locally. `AUTH_MODE` is now `jwt` or `disabled`; the `AUTH_STATIC_*` settings are gone. The two route tests that used it as an "auth on" setup now use the JWT settings. Checks: ruff, format, mypy, 371 backend unit tests.
+- **F14 large functions: split.** `SQLGenerationService.ask` (87 to about 55 lines) now delegates to `_interpret_result` and `_repair`; `AnalyticsQueryService.execute` delegates to `_validation_error` and `_run_read_only`. Behaviour is unchanged; the retry loop, deadline and read-only transaction logic stay where they were and are easier to read. Checks: as above, plus the integration suite and an end-to-end Compose run (see the closing entry).
+- **F17 documentation: indexed, not merged.** The three security documents have distinct roles that cross-reference each other, so merging would lose detail. Added `docs/README.md` (what each document answers, and the order to read the security documents) and marked `sprints.md` as a historical plan.
 
-**Still pending, each needing your decision before anything is removed:**
+## 19. Closing decisions
 
-| Item | What it is | Why it waits |
+The remaining recommendations were reviewed against your requirements (a working, tested, documented single-instance project; tenant isolation is real; the security boundary is untouchable; git history should be development-relevant). Each is decided; none is left open.
+
+| Item | Decision | Reason |
 |---|---|---|
-| F5 metrics kept twice | JSON `/api/v1/metrics` snapshot and the Prometheus registry | Dropping one changes a public endpoint or the alert/dashboard inputs |
-| D3 audit and feedback | `audit_log` table, `/feedback` route, UI thumbs | Depends on whether you need to review who asked what |
-| D4 direct SQL endpoints | `/analytics/query` and `/validate` (off in production, blocked by the proxy) | Removing them removes a developer surface and its tests |
-| F9 `static` auth mode | One shared development token | Convenient for local use; small saving |
-| F17 documentation overlap | `security.md`, `production-security-review.md`, `threat-model.md`, `progress.md`, `sprints.md` | Merging risks losing detail; needs your call on what to keep |
-| F14 splitting `ask` / `execute` | Readability refactor of the two largest functions | Behavioural risk; worth doing only with the integration suite running |
-| D8 evaluation suite, k6 load test, Playwright e2e | Test and tooling assets | Cost/benefit depends on whether you will run them |
-| D7 token issuing | Nothing issues JWTs in production | A product decision, not a cleanup |
+| F5 metrics kept twice (JSON `/api/v1/metrics` and Prometheus) | **Keep** | 214 lines in total. The JSON endpoint is token-gated, and several tests read `metrics.snapshot()`; removing it means rewriting tests for no stated requirement. Accepted duplication. |
+| D3 audit trail and feedback | **Keep** | The data-leak runbook and the threat model rely on the audit trail, and the feedback route is small. Removing the table needs a migration for little gain. |
+| D4 direct SQL endpoints (`/analytics/query`, `/validate`) | **Keep** | The smoke and permission tests use them. They are off in production by default and the frontend proxy never forwards them. |
+| D8 evaluation suite, k6 load test, Playwright e2e | **Keep** | You added the load-test port yourself (`440e7b9`) and installed the e2e packages; the evaluation suite and fuzz tests are the best guard on the validator. |
+| D7 token issuing | **Document only** | Nothing in this codebase issues production JWTs; that is an identity-provider decision. It is listed under Known Limitations in `progress.md` and `README.md`. |
+| F10, F11 | **No change** | See the earlier entries: not real duplication. |
+
+**The recommendations in this document are closed.** Anything new (for example, issuing tokens, or dropping the JSON metrics endpoint) is a new requirement, not an open item here.
+
+### Closing verification
+
+Run on the final code, after all the changes above:
+
+| Check | Result |
+|---|---|
+| `ruff check`, `ruff format --check`, `mypy` | Passed |
+| Backend unit tests | 371 passed |
+| PostgreSQL integration tests (fresh database, `REQUIRE_INTEGRATION=1`) | 43 passed, 0 skipped |
+| Migrations up, down to the first revision, and up again | Passed |
+| Read-only privilege check, evaluation reference check, mock evaluation subset | Passed (76 cases, 0 problems; 5/5 correct, 0 of 4 adversarial leaks) |
+| Frontend lint, tests, production build, `tsc` | Passed (122 tests) |
+| Isolated Compose stack built from the final code, `AUTH_MODE=jwt`, mock provider | Healthy |
+| Live JWT and tenant-isolation checks through the frontend proxy | 19 of 19 passed |
+
+The live checks covered: no token, garbage token, expired token, wrong audience and wrong signature all return 401; a non-admin token without a customer returns 403; an admin sees all 766 active vehicles while customer 7 sees 4 and customer 8 sees 11, each matching the database exactly; a cross-customer revenue ranking returns only the caller's own row for a tenant token and the full top 10 for an admin; another customer cannot read or ask inside someone else's conversation; and the proxy returns 404 for the direct SQL and metrics routes even for an admin.
+
+Not run in this sequence: the Playwright end-to-end suite, the k6 load test, Trivy and dependency audits, and a live Gemini call on the final code (Gemini was verified earlier, on the stabilization commit). Run them when you need them; none of the final changes touch what they cover beyond what the checks above exercise.

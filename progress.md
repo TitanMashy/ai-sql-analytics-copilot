@@ -651,7 +651,7 @@ The verification stack used its own PostgreSQL and was removed afterwards. The r
 
 - Playwright + axe end-to-end tests (`make e2e`), the k6 load test, Trivy image scans, `pip-audit`, `npm audit`, and the long fuzz run: not run in this pass.
 - Lockfile (`make lock` / `lock-check`): no `backend/requirements.lock` exists; the CI step only warns.
-- JWT authentication and tenant isolation were verified by unit and integration tests only, not by a live JWT request against the Compose stack (the Compose run used `AUTH_MODE=disabled`, which production rejects).
+- JWT authentication and tenant isolation were verified by unit and integration tests only, not by a live JWT request against the Compose stack (the Compose run used `AUTH_MODE=disabled`, which production rejects). **Closed afterwards:** a live JWT run on an isolated Compose stack passed 19 of 19 tenant-isolation checks (see `docs/Sequence.md` section 19).
 - Gemini was verified with two live calls only; it is not part of the deterministic suite. External failures (quota, latency, model changes) are not reproducible tests.
 - Backup/restore drill, rollback rehearsal, release workflow, Kubernetes and ops assets: not exercised.
 - Earlier slowness seen with Gemini (`REQUEST_DEADLINE_EXCEEDED`) matches defect 1 (valid SQL rejected, so a repair call consumed the 25 s budget). That causal link is inferred from the logs and from the two successful calls above; the original failing question was not replayed.
@@ -684,7 +684,7 @@ With `LLM_MODE=mock`, the mock provider answers five questions deterministically
 
 ### Simplification since this checkpoint
 
-Dead code, the OpenAI provider, the SQL cache, OpenTelemetry tracing, the Redis rate limiter, and the Kubernetes/release pipeline have been removed, each in its own commit and verified. The decisions behind them, what remains pending, and the checks run are in `docs/Sequence.md` section 18. The section 22 results above describe the state before those removals.
+Dead code, the OpenAI provider, the SQL cache, OpenTelemetry tracing, the Redis rate limiter, the Kubernetes/release pipeline, and the `static` auth mode have been removed, and `ask` / `execute` were split into smaller methods. The decisions behind each, and the items deliberately kept (metrics duplication, audit and feedback, direct SQL endpoints, evaluation/load/e2e tooling), are in `docs/Sequence.md` sections 18 and 19, and `docs/README.md` indexes the documentation. The section 22 results above describe the state before those changes; the closing verification is in Sequence.md section 19.
 
 ### Files to study next
 

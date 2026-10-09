@@ -85,15 +85,7 @@ class Settings(BaseSettings):
     metrics_token: SecretStr | None = Field(
         default=None, validation_alias="METRICS_TOKEN", repr=False
     )
-    auth_mode: Literal["jwt", "static", "disabled"] = Field(
-        default="disabled", validation_alias="AUTH_MODE"
-    )
-    auth_static_token: SecretStr | None = Field(
-        default=None, validation_alias="AUTH_STATIC_TOKEN", repr=False
-    )
-    auth_static_customer_id: int | None = Field(
-        default=None, validation_alias="AUTH_STATIC_CUSTOMER_ID"
-    )
+    auth_mode: Literal["jwt", "disabled"] = Field(default="disabled", validation_alias="AUTH_MODE")
     jwt_algorithm: Literal["HS256", "RS256", "ES256"] = Field(
         default="RS256", validation_alias="JWT_ALGORITHM"
     )
@@ -143,7 +135,7 @@ class Settings(BaseSettings):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
         return value
 
-    @field_validator("rate_limit_llm_requests", "auth_static_customer_id")
+    @field_validator("rate_limit_llm_requests")
     @classmethod
     def validate_positive_optional(cls, value: int | None) -> int | None:
         if value is not None and value <= 0:
@@ -219,10 +211,6 @@ class Settings(BaseSettings):
                 raise ValueError("Production requires AUTH_MODE=jwt.")
         if self.auth_mode == "jwt":
             self._validate_jwt_configuration()
-        if self.auth_mode == "static" and not (
-            self.auth_static_token and self.auth_static_token.get_secret_value().strip()
-        ):
-            raise ValueError("AUTH_STATIC_TOKEN is required when AUTH_MODE=static.")
         if self.conversation_store == "postgres" and not self.database_url.startswith("postgresql"):
             raise ValueError("CONVERSATION_STORE=postgres requires a PostgreSQL DATABASE_URL.")
         if self.audit_sink in {"database", "both"} and not self.database_url.startswith(
@@ -248,7 +236,6 @@ FILE_SECRETS: dict[str, str] = {
     "DATABASE_URL": "database_url",
     "ANALYTICS_DATABASE_URL": "analytics_database_url",
     "GEMINI_API_KEY": "gemini_api_key",
-    "AUTH_STATIC_TOKEN": "auth_static_token",
     "JWT_SECRET": "jwt_secret",
     "JWT_PUBLIC_KEY": "jwt_public_key",
     "METRICS_TOKEN": "metrics_token",

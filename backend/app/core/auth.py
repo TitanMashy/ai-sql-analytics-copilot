@@ -1,9 +1,8 @@
 """Authentication and the request principal.
 
-Three modes are supported, selected by ``AUTH_MODE``:
+Two modes are supported, selected by ``AUTH_MODE``:
 
 * ``jwt``: signed bearer tokens validated for signature, expiry, issuer and audience.
-* ``static``: one shared development token. Rejected when ``APP_ENV=production``.
 * ``disabled``: no credentials required; every request is a local development admin.
 
 The principal carries the tenant (``customer_id``) that the analytics executor uses to scope
@@ -12,7 +11,6 @@ database access, so authentication is part of the data-protection boundary, not 
 
 from __future__ import annotations
 
-import hmac
 import logging
 from dataclasses import dataclass
 
@@ -60,19 +58,6 @@ def _bearer_token(request: Request) -> str:
     if scheme.lower() != "bearer" or not token.strip():
         raise _unauthenticated()
     return token.strip()
-
-
-def _static_principal(token: str, settings: Settings) -> Principal:
-    expected = settings.auth_static_token.get_secret_value() if settings.auth_static_token else ""
-    if not expected or not hmac.compare_digest(token.encode(), expected.encode()):
-        raise _unauthenticated("Invalid credentials.")
-    if settings.auth_static_customer_id is not None:
-        return Principal(
-            user_id=f"static-customer-{settings.auth_static_customer_id}",
-            customer_id=settings.auth_static_customer_id,
-            roles=("analyst",),
-        )
-    return Principal(user_id="static-admin", customer_id=None, roles=(ANALYTICS_ADMIN_ROLE,))
 
 
 def _jwt_principal(token: str, settings: Settings) -> Principal:
@@ -127,12 +112,7 @@ def authenticate(request: Request, settings: Settings | None = None) -> Principa
         if settings.is_production:  # defense in depth; configuration validation also rejects it
             raise _unauthenticated()
         return DEVELOPMENT_PRINCIPAL
-    token = _bearer_token(request)
-    if settings.auth_mode == "static":
-        if settings.is_production:
-            raise _unauthenticated()
-        return _static_principal(token, settings)
-    return _jwt_principal(token, settings)
+    return _jwt_principal(_bearer_token(request), settings)
 
 
 def get_principal(request: Request) -> Principal:

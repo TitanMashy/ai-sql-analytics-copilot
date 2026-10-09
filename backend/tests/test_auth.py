@@ -4,7 +4,6 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from pydantic import SecretStr
 
 from app.core.auth import ANALYTICS_ADMIN_ROLE, Principal
 from app.core.config import Settings
@@ -63,41 +62,6 @@ def test_disabled_mode_allows_requests_as_an_unauthenticated_admin(monkeypatch) 
     assert _get().status_code == 200
 
 
-def test_static_mode_requires_the_exact_token(monkeypatch) -> None:
-    _use_settings(monkeypatch, Settings(auth_mode="static", auth_static_token="dev-token-value"))
-
-    missing = _get()
-    wrong = _get({"Authorization": "Bearer other"})
-    wrong_scheme = _get({"Authorization": "Basic dev-token-value"})
-    correct = _get({"Authorization": "Bearer dev-token-value"})
-
-    assert missing.status_code == 401
-    assert missing.json()["error"]["code"] == "UNAUTHENTICATED"
-    assert missing.headers["WWW-Authenticate"] == "Bearer"
-    assert wrong.status_code == 401
-    assert wrong_scheme.status_code == 401
-    assert correct.status_code == 200
-
-
-def test_static_mode_is_rejected_in_production() -> None:
-    # Defense in depth: configuration validation already refuses this combination at startup,
-    # so the unvalidated constructor is used to reach the runtime check.
-    from app.core.auth import authenticate
-
-    settings = Settings.model_construct(
-        environment="production",
-        auth_mode="static",
-        auth_static_token=SecretStr("dev-token-value"),
-        auth_static_customer_id=None,
-    )
-    request = SimpleNamespace(headers={"authorization": "Bearer dev-token-value"})
-
-    with pytest.raises(HTTPException) as error:
-        authenticate(request, settings)  # type: ignore[arg-type]
-
-    assert error.value.status_code == 401
-
-
 def test_disabled_mode_is_rejected_in_production() -> None:
     from app.core.auth import authenticate
 
@@ -107,19 +71,6 @@ def test_disabled_mode_is_rejected_in_production() -> None:
         authenticate(SimpleNamespace(headers={}), settings)  # type: ignore[arg-type]
 
     assert error.value.status_code == 401
-
-
-def test_static_token_can_be_scoped_to_one_customer() -> None:
-    from app.core.auth import _static_principal
-
-    settings = Settings(
-        auth_mode="static", auth_static_token="dev-token-value", auth_static_customer_id=9
-    )
-
-    principal = _static_principal("dev-token-value", settings)
-
-    assert principal.customer_id == 9
-    assert not principal.is_global
 
 
 def test_valid_jwt_is_accepted(monkeypatch) -> None:
@@ -209,7 +160,7 @@ def test_admin_token_does_not_need_a_customer(monkeypatch) -> None:
     ],
 )
 def test_every_protected_route_requires_credentials(monkeypatch, path) -> None:
-    _use_settings(monkeypatch, Settings(auth_mode="static", auth_static_token="dev-token-value"))
+    _use_settings(monkeypatch, _jwt_settings())
     method, url = path
 
     with TestClient(app) as client:
@@ -222,7 +173,7 @@ def test_every_protected_route_requires_credentials(monkeypatch, path) -> None:
 
 
 def test_health_endpoints_stay_open_without_credentials(monkeypatch) -> None:
-    _use_settings(monkeypatch, Settings(auth_mode="static", auth_static_token="dev-token-value"))
+    _use_settings(monkeypatch, _jwt_settings())
 
     with TestClient(app) as client:
         assert client.get("/health").status_code == 200

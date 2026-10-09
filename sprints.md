@@ -1,5 +1,7 @@
 # AI SQL Analytics Copilot: Production-Readiness Sprints
 
+> **Historical document.** This is the original Sprint 11 and 12 plan. Sprints 11 and 12 were implemented, then verified and stabilized (see [progress.md](progress.md) section 22). Several items below were later removed for the single-instance deployment: the SQL cache, OpenTelemetry tracing, the Redis rate limiter, the Kubernetes manifest and release pipeline, the OpenAI provider, and the `static` auth mode. [docs/Sequence.md](docs/Sequence.md) section 18 records what was removed and why. Do not treat this file as the current specification.
+
 Sprints 1–10 (see [progress.md](progress.md)) delivered a working, production-oriented MVP. This plan adds **Sprint 11** and **Sprint 12**, which close the gaps found in the codebase audit and make the project production ready.
 
 - **Sprint 11 — Secure and Correct:** close security exposure, make SQL generation/repair/execution correct, and fix the result-intelligence bugs. After this sprint the system is safe to expose to real users.
