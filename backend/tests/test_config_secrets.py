@@ -120,15 +120,6 @@ def test_field_level_errors_use_the_environment_variable_name(monkeypatch) -> No
     assert "REQUEST_DEADLINE_SECONDS" in str(error.value)
 
 
-def test_redis_backend_requires_a_url() -> None:
-    with pytest.raises(ValueError, match="REDIS_URL is required"):
-        Settings(rate_limit_backend="redis")
-
-    settings = Settings(rate_limit_backend="redis", redis_url="redis://cache:6379/0")
-    assert settings.rate_limit_backend == "redis"
-    assert "cache:6379" not in repr(settings)
-
-
 def test_durable_stores_require_postgresql() -> None:
     with pytest.raises(ValueError, match="CONVERSATION_STORE=postgres requires"):
         Settings(conversation_store="postgres")

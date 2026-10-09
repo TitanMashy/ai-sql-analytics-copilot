@@ -13,7 +13,6 @@ from sqlalchemy.pool import StaticPool
 from app.analytics.dependencies import get_analytics_query_service
 from app.analytics.service import AnalyticsQueryService
 from app.conversation.service import get_conversation_memory
-from app.core import rate_limit
 from app.core.auth import Principal, get_principal
 from app.core.config import Settings
 from app.db.operational import OperationalBase
@@ -66,51 +65,6 @@ def test_missing_llm_key_reports_degraded_with_http_200(healthy_databases, monke
     # The container stays in service: restarting it would not fix a missing key.
     assert response.status_code == 200
     assert response.json() == {"status": "degraded", "degraded": ["llm_provider"]}
-
-
-class DownLimiter:
-    def check(self, key, now=None, limit=None):
-        return True, 0
-
-    def ping(self):
-        raise ConnectionError("redis is down")
-
-
-def test_redis_down_while_failing_open_is_degraded_not_unready(
-    healthy_databases, monkeypatch
-) -> None:
-    monkeypatch.setattr(rate_limit, "rate_limiter", DownLimiter())
-    monkeypatch.setattr(
-        "app.api.health.get_settings",
-        lambda: Settings(
-            rate_limit_backend="redis", redis_url="redis://cache", rate_limit_fail_mode="open"
-        ),
-    )
-
-    with TestClient(app) as client:
-        response = client.get("/health/ready")
-
-    assert response.status_code == 200
-    assert response.json() == {"status": "degraded", "degraded": ["rate_limiter"]}
-
-
-def test_redis_down_while_failing_closed_makes_the_instance_unready(
-    healthy_databases, monkeypatch
-) -> None:
-    monkeypatch.setattr(rate_limit, "rate_limiter", DownLimiter())
-    monkeypatch.setattr(
-        "app.api.health.get_settings",
-        lambda: Settings(
-            rate_limit_backend="redis", redis_url="redis://cache", rate_limit_fail_mode="closed"
-        ),
-    )
-
-    with TestClient(app) as client:
-        response = client.get("/health/ready")
-
-    assert response.status_code == 503
-    assert response.json()["error"]["code"] == "DEPENDENCY_UNAVAILABLE"
-    assert "redis" not in response.text.lower()
 
 
 def test_required_database_down_is_unready_and_sanitized() -> None:
@@ -175,7 +129,6 @@ def test_diagnostics_require_the_operator_token(healthy_databases, monkeypatch) 
     assert body["checks"]["application_database"]["ok"] is True
     assert body["checks"]["analytics_database"]["ok"] is True
     assert body["features"]["conversation_store"] == "memory"
-    assert body["features"]["sql_cache_enabled"] is False
     assert "operator-token-value" not in allowed.text
     assert "sqlite" not in allowed.text.lower()  # no connection URLs
 

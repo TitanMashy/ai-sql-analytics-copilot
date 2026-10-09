@@ -1,4 +1,4 @@
-"""Tests for the release tooling in the repository's top-level scripts/ directory."""
+"""Tests for the smoke test in the repository's top-level scripts/ directory."""
 
 import importlib.util
 import json
@@ -21,56 +21,7 @@ def _load(name: str):
     return module
 
 
-release_notes = _load("release_notes")
 smoke_test = _load("smoke_test")
-
-
-# -- release notes --------------------------------------------------------------------------
-
-
-def _notes(*commits: tuple[str, str, str]):
-    notes = release_notes.Notes()
-    for sha, subject, body in commits:
-        notes.add(sha, subject, body)
-    return notes
-
-
-def test_commits_are_grouped_by_conventional_type() -> None:
-    text = _notes(
-        ("a1", "feat(api): add feedback endpoint", ""),
-        ("b2", "fix: stop a crash on empty results", ""),
-        ("c3", "docs(runbooks): add credential rotation", ""),
-    ).render("v1.2.0")
-
-    assert text.startswith("# v1.2.0")
-    assert "## Features\n\n- **api:** add feedback endpoint (a1)" in text
-    assert "## Bug fixes\n\n- stop a crash on empty results (b2)" in text
-    assert "## Documentation\n\n- **runbooks:** add credential rotation (c3)" in text
-
-
-def test_breaking_changes_come_first_from_a_bang_or_a_footer() -> None:
-    text = _notes(
-        ("a1", "feat!: drop the v0 endpoints", ""),
-        ("b2", "fix(auth): tighten audience check", "Details.\n\nBREAKING CHANGE: tokens need aud"),
-        ("c3", "chore: tidy", ""),
-    ).render("v2.0.0")
-
-    breaking = text.split("## Breaking changes")[1].split("##")[0]
-    assert "drop the v0 endpoints (a1)" in breaking
-    assert "tokens need aud (b2)" in breaking
-    assert text.index("## Breaking changes") < text.index("## Features")
-
-
-def test_unconventional_commits_are_listed_not_dropped() -> None:
-    text = _notes(("a1", "Fixed the thing", ""), ("b2", "wip", "")).render("v1.0.1")
-
-    assert "## Other changes" in text
-    assert "- Fixed the thing (a1)" in text
-    assert "- wip (b2)" in text
-
-
-def test_an_empty_range_says_so() -> None:
-    assert "No changes since the previous release." in release_notes.Notes().render("v1.0.0")
 
 
 # -- smoke test -----------------------------------------------------------------------------

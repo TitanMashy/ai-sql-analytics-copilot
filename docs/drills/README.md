@@ -7,7 +7,7 @@ kept with the code.
 | Drill | How | Cadence | Record |
 |---|---|---|---|
 | Restore from backup | `scripts/restore_drill.sh` | quarterly, and after a database upgrade | [restore-drill-template.md](restore-drill-template.md) |
-| Rollback | deploy version N, then N-1 in staging, run `scripts/smoke_test.py` | quarterly, and before the first production release | copy the template, change the title |
+| Rollback | deploy version N, then N-1, run `scripts/smoke_test.py` | quarterly, and before the first production release | copy the template, change the title |
 | Credential rotation | follow [credential-rotation](../runbooks/credential-rotation.md) for one secret | per the rotation schedule | copy the template |
 | Tabletop exercise | walk a team through a runbook with a scenario, no systems touched | when a runbook changes | copy the template |
 

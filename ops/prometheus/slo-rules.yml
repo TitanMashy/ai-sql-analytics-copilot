@@ -64,9 +64,3 @@ groups:
           sum(rate(analytics_sql_repair_successes_total[1h]))
           /
           clamp_min(sum(rate(analytics_sql_repair_attempts_total[1h])), 1e-9)
-
-      - record: analytics:sql_cache_hit_ratio:rate1h
-        expr: |
-          sum(rate(analytics_sql_cache_requests_total{result="hit"}[1h]))
-          /
-          clamp_min(sum(rate(analytics_sql_cache_requests_total[1h])), 1e-9)

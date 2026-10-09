@@ -11,14 +11,12 @@ dependencies = [
     "fastapi>=0.115,<1.0",
     "alembic>=1.14,<2.0",
     "google-genai>=1.0,<2.0",
-    "openai>=1.60,<2.0",
     "sqlglot>=27.0,<28.0",
     "pydantic>=2.9,<3.0",
     "pydantic-settings>=2.6,<3.0",
     "psycopg[binary]>=3.2,<4.0",
     "prometheus-client>=0.20,<1.0",
     "pyjwt>=2.8,<3.0",
-    "redis>=5.0,<7.0",
     "sqlalchemy>=2.0,<3.0",
     "uvicorn[standard]>=0.32,<1.0",
 ]
@@ -32,12 +30,6 @@ dev = [
     "pytest-cov>=5.0,<7.0",
     "ruff>=0.8,<1.0",
 ]
-# Optional OpenTelemetry tracing (OTEL_ENABLED=true). Not needed otherwise.
-tracing = [
-    "opentelemetry-api>=1.27,<2.0",
-    "opentelemetry-sdk>=1.27,<2.0",
-    "opentelemetry-exporter-otlp-proto-http>=1.27,<2.0",
-]
 
 [tool.setuptools.packages.find]
 include = ["app*"]
@@ -46,7 +38,7 @@ include = ["app*"]
 pythonpath = ["."]
 testpaths = ["tests"]
 markers = [
-    "integration: requires a live PostgreSQL analytics database (and Redis for limiter tests)",
+    "integration: requires a live PostgreSQL analytics database ",
     "fuzz: randomized validator tests; FUZZ_ITERATIONS controls how many cases run",
 ]
 

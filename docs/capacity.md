@@ -87,7 +87,7 @@ Until measured, start from these and adjust with the table above:
   `replicas x 2 engines x (pool + overflow)` must stay under PostgreSQL's `max_connections`
   minus about 20 for migrations and administrators. Two replicas at defaults use 60.
 - **Rate limits:** `RATE_LIMIT_LLM_REQUESTS` (default 20 per minute per principal) bounds model spend
-  per user; with `RATE_LIMIT_BACKEND=redis` the limit holds across replicas.
+  per user, per backend instance.
 - **Statement budget:** `QUERY_TIMEOUT_SECONDS=10`, `QUERY_COST_LIMIT=1000000`, and
   `MAX_RESULT_ROWS=1000` together bound the work one question can cause.
 - **Deadline:** `REQUEST_DEADLINE_SECONDS=25`, below the frontend's 30-second timeout.

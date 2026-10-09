@@ -30,7 +30,6 @@ from app.core.telemetry import (
     reset_request_telemetry,
     set_request_telemetry,
 )
-from app.core.tracing import configure_tracing, record_span_error, set_span_attribute, span
 from app.llm.provider import LLMProviderError
 
 try:
@@ -41,7 +40,6 @@ except ConfigurationError as configuration_error:
 configure_logging(settings.effective_log_level)
 
 logger = logging.getLogger(__name__)
-tracing_active = configure_tracing(settings)
 metrics.set_build_info(settings.app_version)
 
 
@@ -60,7 +58,7 @@ def _route_template(request: Request) -> str | None:
 
     Newer FastAPI releases keep included routers nested, and ``scope["route"].path`` is then
     relative to the include prefix (``/schema/tables/{table_name}``). The prefix is recovered
-    from the request path so metric and span labels stay identical across FastAPI versions.
+    from the request path so metric labels stay identical across FastAPI versions.
     """
     route = request.scope.get("route")
     template = getattr(route, "path", None)
@@ -149,25 +147,20 @@ async def request_context_middleware(request: Request, call_next):
     started_at = perf_counter()
     path = request.url.path
     try:
-        with span("http.request", request_id=request_id, method=request.method) as current:
-            try:
-                response = await call_next(request)
-            except Exception as error:
-                logger.error(
-                    "unhandled request failure",
-                    extra={
-                        "request_id": request_id,
-                        "endpoint": path,
-                        "error_type": type(error).__name__,
-                    },
-                )
-                response = _internal_error_response(request_id)
-            # The route template (never the raw path) keeps metric and span labels bounded.
-            endpoint = _route_template(request)
-            set_span_attribute(current, "http.route", endpoint or "unmatched")
-            set_span_attribute(current, "http.status_code", response.status_code)
-            if response.status_code >= 500:
-                record_span_error(current, f"HTTP_{response.status_code}")
+        try:
+            response = await call_next(request)
+        except Exception as error:
+            logger.error(
+                "unhandled request failure",
+                extra={
+                    "request_id": request_id,
+                    "endpoint": path,
+                    "error_type": type(error).__name__,
+                },
+            )
+            response = _internal_error_response(request_id)
+        # The route template (never the raw path) keeps metric labels bounded.
+        endpoint = _route_template(request)
 
         elapsed_ms = (perf_counter() - started_at) * 1000
         response.headers["X-Request-ID"] = request_id

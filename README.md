@@ -53,7 +53,7 @@ Open http://localhost:3000. Next.js proxies only the routes the dashboard uses (
 | Method | Endpoint | Purpose |
 |---|---|---|
 | GET | `/health` | Liveness probe: the process is up; touches no dependency. |
-| GET | `/health/ready` | Readiness: 503 when a required dependency is down; 200 with `{"status": "degraded", "degraded": [...]}` when something optional is (missing LLM key, Redis down while failing open). |
+| GET | `/health/ready` | Readiness: 503 when a required dependency is down; 200 with `{"status": "degraded", "degraded": [...]}` when something optional is (missing LLM key). |
 | GET | `/api/v1/health/diagnostics` | Operator-only: dependency latency, pool state, migration revision, enabled features. Needs `METRICS_TOKEN`. |
 | GET | `/api/v1/health` | Compatibility application-database health check. |
 | GET | `/api/v1/health/ready` | Versioned readiness alias. |
@@ -109,13 +109,13 @@ The PostgreSQL init script sets the `analytics_readonly` password only for new c
 
 Configuration lives in `.env.example` and the full setting-by-setting reference is in [docs/deployment.md](docs/deployment.md). Important values include `DATABASE_URL`, `ANALYTICS_DATABASE_URL`, distinct `POSTGRES_PASSWORD` and `ANALYTICS_DATABASE_PASSWORD`, `APP_ENV`, `LLM_MODE`, `GEMINI_API_KEY`, `CORS_ALLOWED_ORIGINS`, `MAX_REQUEST_BODY_BYTES`, `MAX_QUESTION_LENGTH`, `MAX_CONVERSATION_CONTEXT_CHARS`, `RATE_LIMIT_REQUESTS`, `RATE_LIMIT_WINDOW_SECONDS`, pool settings, `QUERY_TIMEOUT_SECONDS`, `MAX_RESULT_ROWS`, and `MAX_REPAIR_RETRIES`.
 
-`GET /health` is liveness; `GET /health/ready` is readiness and reports `degraded` (still HTTP 200) for optional dependencies such as the LLM key or Redis-while-failing-open, so an orchestrator never restarts a healthy container over them. JSON logs carry request/conversation IDs and LLM, validation, SQL, repair, row-count, total-duration, and response-status metadata without logging questions, SQL, API keys, or full URLs. Every `/ask` and every rating also writes an audit event (principal, request id, SQL hash, tables, row count, duration, outcome; no question or SQL text).
+`GET /health` is liveness; `GET /health/ready` is readiness and reports `degraded` (still HTTP 200) for optional dependencies such as the LLM key, so an orchestrator never restarts a healthy container over them. JSON logs carry request/conversation IDs and LLM, validation, SQL, repair, row-count, total-duration, and response-status metadata without logging questions, SQL, API keys, or full URLs. Every `/ask` and every rating also writes an audit event (principal, request id, SQL hash, tables, row count, duration, outcome; no question or SQL text).
 
-**Durable and shared state.** `CONVERSATION_STORE=postgres` keeps conversations in PostgreSQL (retention `CONVERSATION_TTL_DAYS`, purge job `python -m app.jobs.purge`), and `RATE_LIMIT_BACKEND=redis` makes the rate limit hold across replicas (`RATE_LIMIT_FAIL_MODE` chooses fail-open or fail-closed when Redis is down). With both set the backend is stateless and can run as several replicas. `SQL_CACHE_ENABLED=true` caches the SQL for standalone questions so repeats skip the LLM call; it never caches rows. `QUERY_COST_LIMIT` rejects queries whose PostgreSQL plan cost exceeds a budget before they run.
+**Durable and shared state.** `CONVERSATION_STORE=postgres` keeps conversations in PostgreSQL (retention `CONVERSATION_TTL_DAYS`, purge job `python -m app.jobs.purge`). The rate limit is kept in process memory, so run a single backend instance. `QUERY_COST_LIMIT` rejects queries whose PostgreSQL plan cost exceeds a budget before they run.
 
 **Secrets as files.** Every secret setting accepts `NAME_FILE=/path`; startup validates the whole configuration and exits naming each bad setting (never its value). See [docs/operations.md](docs/operations.md).
 
-**Observability.** `GET /api/v1/metrics/prometheus` (operator token) exposes histograms by route, LLM, validation, and SQL execution; optional OpenTelemetry tracing with `OTEL_ENABLED=true`. Alert rules, SLO recording rules, a Grafana dashboard, and runbooks are in [`ops/`](ops/) and [`docs/runbooks/`](docs/runbooks/); objectives are in [docs/slos.md](docs/slos.md).
+**Observability.** `GET /api/v1/metrics/prometheus` (operator token) exposes histograms by route, LLM, validation, and SQL execution. Alert rules, SLO recording rules, a Grafana dashboard, and runbooks are in [`ops/`](ops/) and [`docs/runbooks/`](docs/runbooks/); objectives are in [docs/slos.md](docs/slos.md).
 
 ## Testing and CI
 
@@ -128,7 +128,7 @@ make typecheck     # mypy
 make coverage      # tests with per-package coverage gates
 make fuzz          # longer randomized validator run
 make verify-permissions   # database privilege model (needs the Compose database)
-pytest -m integration     # PostgreSQL + Redis: tenant isolation, durable conversations, query cost
+pytest -m integration     # PostgreSQL: tenant isolation, durable conversations, query cost
 make eval-check    # every golden-question reference query runs on the seeded database
 make eval          # text-to-SQL evaluation (PROVIDER=mock|gemini, SUBSET=mock)
 ```
@@ -152,7 +152,7 @@ npm run build
 
 The backend smoke test exercises active vehicles, total revenue, top customers, monthly revenue, idle time, and fuel queries; it records SQL and total API latency.
 
-GitHub Actions (`.github/workflows/`) runs on every push: backend lint, format check, mypy, unit tests with coverage gates and a seeded validator fuzz run, `pip-audit`; an integration job against PostgreSQL and Redis (init script, migrations with a downgrade round trip, seed, privilege verification, `pytest -m integration` with skips turned into failures, the evaluation dataset check and the deterministic evaluation subset); frontend lint, tests (including the API contract check), build, and `npm audit`; Docker image builds with Trivy scans; and Playwright end-to-end tests with axe accessibility scans. Nightly it runs the full evaluation against the real model and a long fuzz run; weekly it runs the k6 load test. Tagged releases build scanned, SBOM-attached images, publish notes, deploy to staging, smoke test, and wait for approval before production (`release.yml`). Everything uses the mock provider unless a provider key is configured as a repository secret.
+GitHub Actions (`.github/workflows/`) runs on every push: backend lint, format check, mypy, unit tests with coverage gates and a seeded validator fuzz run, `pip-audit`; an integration job against PostgreSQL (init script, migrations with a downgrade round trip, seed, privilege verification, `pytest -m integration` with skips turned into failures, the evaluation dataset check and the deterministic evaluation subset); frontend lint, tests (including the API contract check), build, and `npm audit`; Docker image builds with Trivy scans; and Playwright end-to-end tests with axe accessibility scans. Nightly it runs the full evaluation against the real model and a long fuzz run; weekly it runs the k6 load test. Releases are manual: tag, `docker compose up --build -d`, then run `scripts/smoke_test.py` (see [docs/operations.md](docs/operations.md)). Everything uses the mock provider unless a provider key is configured as a repository secret.
 
 ## Portfolio Notes
 

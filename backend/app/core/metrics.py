@@ -29,10 +29,7 @@ COUNTER_NAMES = (
     "sql_repair_attempts_total",
     "sql_repair_successes_total",
     "rate_limit_responses_total",
-    "rate_limiter_failures_total",
     "deadline_exceeded_total",
-    "sql_cache_hits_total",
-    "sql_cache_misses_total",
     "feedback_total",
 )
 OBSERVATION_NAMES = (
@@ -123,12 +120,6 @@ class MetricsRegistry:
             ["scope"],
             registry=self.registry,
         )
-        self._cache_requests = Counter(
-            "analytics_sql_cache_requests",
-            "Prompt-to-SQL cache lookups by result",
-            ["result"],
-            registry=self.registry,
-        )
         self._feedback = Counter(
             "analytics_feedback_by_rating",
             "User feedback on answers, by rating",
@@ -195,10 +186,6 @@ class MetricsRegistry:
     def record_rate_limit_rejection(self, scope: str) -> None:
         self.increment("rate_limit_responses_total")
         self._rate_limit_by_scope.labels(scope).inc()
-
-    def record_cache(self, hit: bool) -> None:
-        self.increment("sql_cache_hits_total" if hit else "sql_cache_misses_total")
-        self._cache_requests.labels("hit" if hit else "miss").inc()
 
     def record_feedback(self, helpful: bool) -> None:
         self.increment("feedback_total")

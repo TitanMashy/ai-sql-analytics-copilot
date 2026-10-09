@@ -14,7 +14,6 @@ from app.analytics.validator import SQLValidator, ValidationResult
 from app.core.auth import Principal
 from app.core.metrics import metrics
 from app.core.telemetry import get_request_telemetry
-from app.core.tracing import record_span_error, set_span_attribute, span
 from app.db.analytics_surface import SCOPE_DENY, SCOPE_GLOBAL, SCOPE_TENANT
 
 logger = logging.getLogger(__name__)
@@ -124,8 +123,7 @@ class AnalyticsQueryService:
     def validate(self, sql: str, request_id: str | None = None) -> ValidationResult:
         started_at = perf_counter()
         telemetry = get_request_telemetry()
-        with span("sql.validate", request_id=telemetry.request_id if telemetry else request_id):
-            result = self.validator.validate(sql)
+        result = self.validator.validate(sql)
         elapsed_ms = (perf_counter() - started_at) * 1000
         metrics.observe("sql_validation_latency_ms", elapsed_ms)
         if telemetry:
@@ -175,28 +173,22 @@ class AnalyticsQueryService:
         scope, customer_id = self._tenant_scope(principal)
 
         started_at = perf_counter()
-        with span("sql.execute", request_id=request_id, scope=scope) as current:
-            try:
-                with self.engine.connect() as connection:
-                    is_postgresql = connection.dialect.name == "postgresql"
-                    if is_postgresql:
-                        self._prepare_postgresql_transaction(
-                            connection, effective_timeout, scope, customer_id
-                        )
-                    statement = self._driver_sql(validation.normalized_sql or sql, connection)
-                    if is_postgresql:
-                        self._check_query_cost(connection, statement)
-                    result = connection.exec_driver_sql(statement)
-                    rows = result.fetchmany(self.max_result_rows + 1)
-                    columns = list(result.keys())
-            except AnalyticsServiceError as error:
-                record_span_error(current, error.code)
-                raise
-            except SQLAlchemyError as error:
-                translated = self._translate_error(error, started_at, request_id)
-                record_span_error(current, translated.code)
-                raise translated from error
-            set_span_attribute(current, "db.row_count", len(rows))
+        try:
+            with self.engine.connect() as connection:
+                is_postgresql = connection.dialect.name == "postgresql"
+                if is_postgresql:
+                    self._prepare_postgresql_transaction(
+                        connection, effective_timeout, scope, customer_id
+                    )
+                statement = self._driver_sql(validation.normalized_sql or sql, connection)
+                if is_postgresql:
+                    self._check_query_cost(connection, statement)
+                result = connection.exec_driver_sql(statement)
+                rows = result.fetchmany(self.max_result_rows + 1)
+                columns = list(result.keys())
+        except SQLAlchemyError as error:
+            translated = self._translate_error(error, started_at, request_id)
+            raise translated from error
 
         truncated = len(rows) > self.max_result_rows
         if truncated:

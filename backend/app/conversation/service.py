@@ -72,9 +72,6 @@ class ConversationStore:
     def create_session(self, conversation_id: str | None = None, owner: str | None = None) -> str:
         raise NotImplementedError
 
-    def get_or_create(self, conversation_id: str | None = None, owner: str | None = None) -> str:
-        return self.create_session(conversation_id, owner)
-
     def assert_access(self, conversation_id: str, owner: str | None = None) -> None:
         raise NotImplementedError
 
@@ -165,11 +162,6 @@ class ConversationMemory(ConversationStore):
         self.ttl = timedelta(seconds=ttl_seconds)
         self._sessions: dict[str, ConversationSession] = {}
         self._lock = RLock()
-
-    @staticmethod
-    def default() -> ConversationMemory:
-        store = get_conversation_memory()
-        return store  # type: ignore[return-value]
 
     # -- session lifecycle -------------------------------------------------------------------
 

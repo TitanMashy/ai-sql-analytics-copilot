@@ -9,7 +9,6 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.analytics.service import AnalyticsQueryService
-from app.core import tracing
 from app.core.audit import (
     AuditEvent,
     AuditService,
@@ -44,8 +43,6 @@ def test_exposition_contains_counters_histograms_and_build_info() -> None:
     registry.record_validation_failure("QUERY_SECURITY_ERROR")
     registry.record_sql_failure("COLUMN_NOT_FOUND")
     registry.record_rate_limit_rejection("llm")
-    registry.record_cache(True)
-    registry.record_cache(False)
     registry.increment("sql_repair_attempts_total")
     registry.increment("sql_repair_successes_total")
     registry.observe("sql_execution_latency_ms", 120)
@@ -63,8 +60,6 @@ def test_exposition_contains_counters_histograms_and_build_info() -> None:
     assert 'analytics_validation_rejections_total{reason="QUERY_SECURITY_ERROR"} 1.0' in text
     assert 'analytics_sql_execution_errors_total{code="COLUMN_NOT_FOUND"} 1.0' in text
     assert 'analytics_rate_limit_rejections_total{scope="llm"} 1.0' in text
-    assert 'analytics_sql_cache_requests_total{result="hit"} 1.0' in text
-    assert 'analytics_sql_cache_requests_total{result="miss"} 1.0' in text
     assert "analytics_sql_repair_attempts_total 1.0" in text
     assert "analytics_sql_execution_latency_seconds_bucket" in text
     assert 'analytics_feedback_by_rating_total{helpful="false"} 1.0' in text
@@ -75,8 +70,6 @@ def test_labelled_recorders_also_feed_the_json_counters() -> None:
     registry.record_validation_failure("QUERY_PARSE_ERROR")
     registry.record_sql_failure("QUERY_TIMEOUT")
     registry.record_rate_limit_rejection("read")
-    registry.record_cache(True)
-    registry.record_cache(False)
     registry.record_feedback(True)
 
     snapshot = registry.snapshot()
@@ -84,8 +77,6 @@ def test_labelled_recorders_also_feed_the_json_counters() -> None:
     assert snapshot["validation_failures_total"] == 1
     assert snapshot["sql_execution_failures_total"] == 1
     assert snapshot["rate_limit_responses_total"] == 1
-    assert snapshot["sql_cache_hits_total"] == 1
-    assert snapshot["sql_cache_misses_total"] == 1
     assert snapshot["feedback_total"] == 1
 
 
@@ -139,51 +130,6 @@ def test_http_metrics_use_the_route_template_not_the_raw_path() -> None:
     assert "not_a_table" not in text
     assert "/definitely/not/a/route" not in text
     assert 'route="unmatched"' in text
-
-
-# -- tracing --------------------------------------------------------------------------------
-
-
-def test_spans_are_a_no_op_when_tracing_is_disabled() -> None:
-    assert tracing.configure_tracing(Settings(otel_enabled=False)) is False
-
-    with tracing.span("sql.execute", request_id="r-1", sql="SELECT 1") as current:
-        tracing.set_span_attribute(current, "db.row_count", 3)
-        tracing.record_span_error(current, "QUERY_TIMEOUT")
-
-    assert current is None
-    assert not tracing.tracing_enabled()
-
-
-def test_sensitive_attribute_names_are_never_set() -> None:
-    recorded: dict[str, object] = {}
-
-    class FakeSpan:
-        def set_attribute(self, key, value):
-            recorded[key] = value
-
-    class FakeContext:
-        def __enter__(self):
-            return FakeSpan()
-
-        def __exit__(self, *exc):
-            return False
-
-    class FakeTracer:
-        def start_as_current_span(self, name):
-            return FakeContext()
-
-    tracing._tracer = FakeTracer()
-    try:
-        with tracing.span(
-            "llm.call", provider="gemini", sql="SELECT 1", question="secret", prompt="p"
-        ) as current:
-            tracing.set_span_attribute(current, "token", "t")
-            tracing.set_span_attribute(current, "db.row_count", 2)
-    finally:
-        tracing._tracer = None
-
-    assert recorded == {"provider": "gemini", "db.row_count": 2}
 
 
 # -- audit ----------------------------------------------------------------------------------

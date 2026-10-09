@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       provider:
-        description: "Provider for the evaluation (gemini or openai)"
+        description: "Provider for the evaluation (gemini)"
         default: gemini
         required: false
       fuzz_iterations:
@@ -67,13 +67,9 @@ jobs:
         id: key
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           if [ "$PROVIDER" = "gemini" ] && [ -z "$GEMINI_API_KEY" ]; then
             echo "::notice::GEMINI_API_KEY is not configured; skipping the model evaluation."
-            echo "available=false" >> "$GITHUB_OUTPUT"
-          elif [ "$PROVIDER" = "openai" ] && [ -z "$OPENAI_API_KEY" ]; then
-            echo "::notice::OPENAI_API_KEY is not configured; skipping the model evaluation."
             echo "available=false" >> "$GITHUB_OUTPUT"
           else
             echo "available=true" >> "$GITHUB_OUTPUT"
@@ -116,7 +112,6 @@ jobs:
           DATABASE_URL: postgresql+psycopg://app:ci-owner-password@localhost:5432/app
           ANALYTICS_DATABASE_URL: postgresql+psycopg://analytics_readonly:ci-readonly-password@localhost:5432/app
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-2.5-flash' }}
         run: >-
           python -m evals.run_eval --provider "$PROVIDER"

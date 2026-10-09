@@ -254,7 +254,3 @@ export async function getBusinessDefinitions(): Promise<BusinessDefinitionsRespo
   }
   return body as BusinessDefinitionsResponse;
 }
-
-export async function getSchema(): Promise<Record<string, unknown>> {
-  return apiFetch<Record<string, unknown>>("/api/v1/schema/tables");
-}
