@@ -119,28 +119,7 @@ class SQLGenerationService:
                     principal=principal,
                     timeout_seconds=deadline.remaining(),
                 )
-                analysis = self.result_analyzer.analyze(
-                    question=question,
-                    sql=generated.sql,
-                    columns=result.columns,
-                    rows=result.rows,
-                    execution_time_ms=result.execution_time_ms,
-                    row_count=result.row_count,
-                    column_types=result.column_types,
-                )
-                visualization = self.visualization_selector.select(
-                    question, result.columns, result.rows, analysis
-                )
-                warnings = list(analysis.warnings)
-                if result.truncated:
-                    warnings.append(
-                        f"Results were truncated to the first {result.row_count:,} rows; "
-                        "refine the question for complete results."
-                    )
-                analysis = replace(analysis, visualization=visualization, warnings=warnings)
-                summary = self.summary_service.summarize(
-                    question, generated.sql, result.columns, result.rows, analysis
-                )
+                analysis, summary = self._interpret_result(question, generated.sql, result)
                 if conversation_id:
                     self._remember(conversation_id, question, generated, summary, principal)
                 if repair_attempts:
@@ -168,20 +147,62 @@ class SQLGenerationService:
                     "repairing analytics SQL",
                     extra={"request_id": request_id, "repair_count": repair_attempts},
                 )
-                # The hint carries the identifier or SQLSTATE detail that makes a repair possible;
-                # the public message is deliberately generic and would turn repair into a re-roll.
-                repair_call = partial(
-                    self.provider.repair_sql,
-                    question,
-                    generated.sql,
-                    error.repair_hint or error.message,
-                    context,
-                    conversation_context=resolved_context,
+                generated = self._repair(
+                    question, generated, error, context, resolved_context, deadline
                 )
-                repaired = self._call_provider(repair_call, deadline)
-                generated = self._to_generated_query(question, context, repaired)
 
     # -- pipeline steps ---------------------------------------------------------------------
+
+    def _interpret_result(
+        self, question: str, sql: str, result: QueryResult
+    ) -> tuple[ResultAnalysis, str | None]:
+        """Analyze a result, choose its chart, and summarize it (from the data only)."""
+        analysis = self.result_analyzer.analyze(
+            question=question,
+            sql=sql,
+            columns=result.columns,
+            rows=result.rows,
+            execution_time_ms=result.execution_time_ms,
+            row_count=result.row_count,
+            column_types=result.column_types,
+        )
+        visualization = self.visualization_selector.select(
+            question, result.columns, result.rows, analysis
+        )
+        warnings = list(analysis.warnings)
+        if result.truncated:
+            warnings.append(
+                f"Results were truncated to the first {result.row_count:,} rows; "
+                "refine the question for complete results."
+            )
+        analysis = replace(analysis, visualization=visualization, warnings=warnings)
+        summary = self.summary_service.summarize(
+            question, sql, result.columns, result.rows, analysis
+        )
+        return analysis, summary
+
+    def _repair(
+        self,
+        question: str,
+        generated: GeneratedQuery,
+        error: AnalyticsServiceError,
+        context: SchemaContext,
+        resolved_context: str | None,
+        deadline: Deadline,
+    ) -> GeneratedQuery:
+        """Ask the provider to fix rejected SQL. The result is validated again by the caller."""
+        # The hint carries the identifier or SQLSTATE detail that makes a repair possible;
+        # the public message is deliberately generic and would turn repair into a re-roll.
+        repair_call = partial(
+            self.provider.repair_sql,
+            question,
+            generated.sql,
+            error.repair_hint or error.message,
+            context,
+            conversation_context=resolved_context,
+        )
+        repaired = self._call_provider(repair_call, deadline)
+        return self._to_generated_query(question, context, repaired)
 
     def _prepare(
         self,

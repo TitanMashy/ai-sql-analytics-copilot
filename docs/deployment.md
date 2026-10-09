@@ -32,7 +32,6 @@ Copy `.env.example` to `.env` for local Compose use. `.env` is ignored by Git. R
 | `JWT_SECRET` | HS256 signing secret | 32+ characters; supply through a secret store. |
 | `JWT_PUBLIC_KEY` | PEM public key for RS256/ES256 | Supply through a secret store. |
 | `JWT_ISSUER`, `JWT_AUDIENCE` | Required token claims | Both are required in `jwt` mode. |
-| `AUTH_STATIC_TOKEN`, `AUTH_STATIC_CUSTOMER_ID` | Development shared token and optional tenant | Rejected in production. |
 | `ENABLE_DIRECT_SQL_ENDPOINTS` | Mount `/analytics/query` and `/validate` | Off by default in production. |
 | `METRICS_TOKEN` | Bearer token for `/api/v1/metrics` | Unset in production disables the endpoint. |
 | `FORWARDED_ALLOW_IPS` | Trusted proxy addresses for `X-Forwarded-For` (uvicorn) | Compose sets `*` because only the frontend reaches the backend; otherwise name the proxy. |
@@ -117,6 +116,6 @@ Rate limiting, metrics, and conversations are process-local. Multi-instance depl
 | `CONVERSATION_TTL_DAYS`, `CONVERSATION_MAX_PER_OWNER`, `CONVERSATION_MAX_TURNS` | retention and caps | 30, 200, 8 |
 | `QUERY_COST_LIMIT` | reject plans above this PostgreSQL cost; empty disables | 1,000,000 |
 | `AUDIT_SINK`, `AUDIT_RETENTION_DAYS` | `log`, `database`, or `both` | `log`; Compose `both`; 365 |
-| `<SECRET>_FILE` | read `DATABASE_URL`, `ANALYTICS_DATABASE_URL`, `GEMINI_API_KEY`, `AUTH_STATIC_TOKEN`, `JWT_SECRET`, `JWT_PUBLIC_KEY`, or `METRICS_TOKEN` from a file | setting both is a startup error |
+| `<SECRET>_FILE` | read `DATABASE_URL`, `ANALYTICS_DATABASE_URL`, `GEMINI_API_KEY`, `JWT_SECRET`, `JWT_PUBLIC_KEY`, or `METRICS_TOKEN` from a file | setting both is a startup error |
 
 Compose adds a one-shot `migrate` service (the backend waits for it), plus `seed` (profile `demo`) and `purge` (profile `ops`). Readiness (`/health/ready`) returns 503 only for required dependencies and 200 with `{"status": "degraded"}` for optional ones. Operating, releasing, rolling back, and incident response: [operations.md](operations.md).

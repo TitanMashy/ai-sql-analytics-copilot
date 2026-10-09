@@ -88,9 +88,8 @@ def _production_kwargs(**overrides):
 
 
 def test_production_requires_signed_token_authentication() -> None:
-    for mode in ("disabled", "static"):
-        with pytest.raises(ValueError, match="AUTH_MODE=jwt"):
-            Settings(**_production_kwargs(auth_mode=mode, auth_static_token="dev-token"))
+    with pytest.raises(ValueError, match="AUTH_MODE=jwt"):
+        Settings(**_production_kwargs(auth_mode="disabled"))
 
 
 def test_jwt_configuration_must_be_complete() -> None:
@@ -110,11 +109,6 @@ def test_jwt_configuration_must_be_complete() -> None:
             jwt_issuer="https://issuer",
             jwt_audience="analytics",
         )
-
-
-def test_static_mode_requires_a_token_outside_production() -> None:
-    with pytest.raises(ValueError, match="AUTH_STATIC_TOKEN"):
-        Settings(auth_mode="static")
 
 
 def test_direct_sql_endpoints_are_off_in_production_unless_enabled() -> None:

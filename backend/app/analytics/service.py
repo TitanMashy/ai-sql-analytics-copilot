@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from time import perf_counter
 from typing import Any
@@ -149,23 +150,7 @@ class AnalyticsQueryService:
     ) -> QueryResult:
         validation = self.validate(sql, request_id=request_id)
         if not validation.valid:
-            error_code = validation.error_code
-            status_code = 400
-            if validation.error_code == "QUERY_VALIDATION_ERROR" and any(
-                error.startswith("Unknown or disallowed table") for error in validation.errors
-            ):
-                error_code = "TABLE_NOT_FOUND"
-                status_code = 404
-                error_message = "The requested table does not exist."
-            else:
-                error_message = "; ".join(validation.errors)
-            raise AnalyticsServiceError(
-                error_code,
-                error_message,
-                status_code,
-                repairable=validation.repairable,
-                repair_hint="; ".join(validation.errors),
-            )
+            raise self._validation_error(validation)
 
         effective_timeout = self.query_timeout_seconds
         if timeout_seconds is not None:
@@ -173,22 +158,14 @@ class AnalyticsQueryService:
         scope, customer_id = self._tenant_scope(principal)
 
         started_at = perf_counter()
-        try:
-            with self.engine.connect() as connection:
-                is_postgresql = connection.dialect.name == "postgresql"
-                if is_postgresql:
-                    self._prepare_postgresql_transaction(
-                        connection, effective_timeout, scope, customer_id
-                    )
-                statement = self._driver_sql(validation.normalized_sql or sql, connection)
-                if is_postgresql:
-                    self._check_query_cost(connection, statement)
-                result = connection.exec_driver_sql(statement)
-                rows = result.fetchmany(self.max_result_rows + 1)
-                columns = list(result.keys())
-        except SQLAlchemyError as error:
-            translated = self._translate_error(error, started_at, request_id)
-            raise translated from error
+        rows, columns = self._run_read_only(
+            validation.normalized_sql or sql,
+            effective_timeout,
+            scope,
+            customer_id,
+            started_at,
+            request_id,
+        )
 
         truncated = len(rows) > self.max_result_rows
         if truncated:
@@ -220,6 +197,58 @@ class AnalyticsQueryService:
             column_types=column_types,
             truncated=truncated,
         )
+
+    @staticmethod
+    def _validation_error(validation: ValidationResult) -> AnalyticsServiceError:
+        """Map a rejected validation to the error raised (and offered to the repair step)."""
+        error_code = validation.error_code
+        status_code = 400
+        if validation.error_code == "QUERY_VALIDATION_ERROR" and any(
+            error.startswith("Unknown or disallowed table") for error in validation.errors
+        ):
+            error_code = "TABLE_NOT_FOUND"
+            status_code = 404
+            error_message = "The requested table does not exist."
+        else:
+            error_message = "; ".join(validation.errors)
+        return AnalyticsServiceError(
+            error_code,
+            error_message,
+            status_code,
+            repairable=validation.repairable,
+            repair_hint="; ".join(validation.errors),
+        )
+
+    def _run_read_only(
+        self,
+        sql: str,
+        timeout_seconds: float,
+        scope: str,
+        customer_id: str,
+        started_at: float,
+        request_id: str | None,
+    ) -> tuple[Sequence[Any], list[str]]:
+        """Run validated SQL in a read-only, tenant-scoped transaction and fetch the rows.
+
+        Fetches one row past ``max_result_rows`` so the caller can tell the result was truncated.
+        """
+        try:
+            with self.engine.connect() as connection:
+                is_postgresql = connection.dialect.name == "postgresql"
+                if is_postgresql:
+                    self._prepare_postgresql_transaction(
+                        connection, timeout_seconds, scope, customer_id
+                    )
+                statement = self._driver_sql(sql, connection)
+                if is_postgresql:
+                    self._check_query_cost(connection, statement)
+                result = connection.exec_driver_sql(statement)
+                rows = result.fetchmany(self.max_result_rows + 1)
+                columns = list(result.keys())
+        except SQLAlchemyError as error:
+            translated = self._translate_error(error, started_at, request_id)
+            raise translated from error
+        return rows, columns
 
     def _check_query_cost(self, connection: Connection, statement: str) -> None:
         """Reject a query whose planner estimate exceeds ``QUERY_COST_LIMIT`` before running it.
