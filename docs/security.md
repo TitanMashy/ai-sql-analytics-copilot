@@ -31,6 +31,8 @@ The validator:
 - Rejects columns that hold personal data (`users.email`, `drivers.phone`, `drivers.license_number`, contact names) as security errors, and hides them from prompts and the schema API.
 - Validates table aliases and referenced columns, including derived-table (`FROM (SELECT ...) alias`) aliases and their columns.
 - Limits joins, nesting, and cartesian joins.
+- Rejects a `SELECT` that selects no columns (bare `SELECT`, `FROM SELECT`, or an empty subquery), which cannot be rewritten into valid SQL.
+- Executes the validator's own re-generated SQL (`normalized_sql`), not the model's text; comments are stripped from it.
 - Rewrites the outermost query to `LIMIT MAX_RESULT_ROWS + 1` when it has no limit or a larger one (a `LIMIT` inside a subquery cannot mask a missing outer one). The executor trims the extra row and reports `truncated: true`, so large results degrade to a warning instead of an error and the database never computes beyond the cap for plain selects.
 - Returns normalized PostgreSQL SQL, referenced tables, warnings, and an internal complexity heuristic.
 

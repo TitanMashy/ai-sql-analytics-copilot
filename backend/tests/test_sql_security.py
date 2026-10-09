@@ -556,3 +556,37 @@ def test_connectors_do_not_hide_a_restricted_function(validator: SQLValidator) -
     )
 
     assert not result.valid
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT",
+        "SELECT -- nothing else",
+        "SELECT /* nothing */",
+        "FROM SELECT",
+        "SELECT * FROM (SELECT) s",
+        "WITH t AS (SELECT) SELECT * FROM t",
+    ],
+)
+def test_a_select_that_selects_nothing_is_rejected_not_rewritten_into_invalid_sql(
+    validator: SQLValidator, sql: str
+) -> None:
+    # Regression: a bare SELECT was accepted and became "SELECT LIMIT 1001" after the row cap.
+    result = validator.validate(sql)
+
+    assert not result.valid
+    assert any("at least one column" in error for error in result.errors)
+    assert result.repairable
+
+
+def test_comments_are_not_carried_into_the_executed_sql(validator: SQLValidator) -> None:
+    result = validator.validate(
+        "SELECT /* leading */ COUNT(*) AS n -- trailing\nFROM vehicles /* DROP TABLE vehicles */"
+    )
+
+    assert result.valid
+    assert result.normalized_sql is not None
+    assert "/*" not in result.normalized_sql
+    assert "--" not in result.normalized_sql
+    assert "DROP" not in result.normalized_sql
