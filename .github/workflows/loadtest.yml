@@ -26,7 +26,7 @@ jobs:
       POSTGRES_PASSWORD: ci-owner-password
       ANALYTICS_DATABASE_PASSWORD: ci-readonly-password
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Start the load-test stack
         run: |
           cp .env.example .env
