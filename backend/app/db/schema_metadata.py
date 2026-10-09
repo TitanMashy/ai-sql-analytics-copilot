@@ -2,6 +2,7 @@ import hashlib
 import re
 from dataclasses import dataclass
 from functools import lru_cache
+from typing import Any
 
 from sqlalchemy import CheckConstraint, inspect
 
@@ -78,7 +79,7 @@ def get_schema_metadata() -> tuple[TableMetadata, ...]:
             ColumnMetadata(
                 column.name,
                 str(column.type),
-                column.nullable,
+                bool(column.nullable),
                 enumerations.get(column.name, ()),
             )
             for column in table.columns
@@ -123,7 +124,7 @@ def schema_fingerprint() -> str:
     return digest.hexdigest()[:16]
 
 
-def get_database_schema(engine: object) -> tuple[TableMetadata, ...]:
+def get_database_schema(engine: Any) -> tuple[TableMetadata, ...]:
     """Return metadata for tables currently present in a database connection."""
     inspector = inspect(engine)
     present_tables = set(inspector.get_table_names())

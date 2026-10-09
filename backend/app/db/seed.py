@@ -389,6 +389,10 @@ def seed_database(session: Session, seed: int = SEED_RANDOM) -> bool:
                         f"COALESCE((SELECT MAX(id) FROM {table_name}), 1), true)"
                     )
                 )
+                # Fresh tables have no planner statistics until autovacuum runs, so the EXPLAIN
+                # cost pre-flight would see ~2,900 rows where there are 50,000 and under-estimate
+                # an expensive query. Analyze now so the estimate is meaningful immediately.
+                session.execute(text(f"ANALYZE {table_name}"))
     return True
 
 

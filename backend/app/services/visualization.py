@@ -12,8 +12,20 @@ MAX_PIE_CATEGORIES = 6
 # Measures whose values do not add up to a whole, so a pie of them would mislead.
 NON_ADDITIVE_TOKENS = frozenset(
     {
-        "avg", "average", "mean", "median", "min", "max", "rate", "ratio", "percent",
-        "percentage", "pct", "per", "speed", "utilization",
+        "avg",
+        "average",
+        "mean",
+        "median",
+        "min",
+        "max",
+        "rate",
+        "ratio",
+        "percent",
+        "percentage",
+        "pct",
+        "per",
+        "speed",
+        "utilization",
     }
 )
 

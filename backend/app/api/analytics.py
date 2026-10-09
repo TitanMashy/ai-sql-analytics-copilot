@@ -56,9 +56,7 @@ def execute_analytics_query(
     "/validate",
     response_model=AnalyticsValidationResponse,
     summary="Validate an analytics SQL statement",
-    description=(
-        "Run the AST-based SQL validator without executing the query."
-    ),
+    description=("Run the AST-based SQL validator without executing the query."),
     responses={422: {"model": ErrorResponse, "description": "Invalid request body"}},
 )
 def validate_analytics_query(

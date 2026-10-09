@@ -99,9 +99,7 @@ def compare_results(
         actual = Counter(last_numeric(actual_columns, row) for row in actual_rows)
         if expected == actual:
             return True, ""
-        return False, (
-            f"measures differ: expected {_preview(expected)}, got {_preview(actual)}"
-        )
+        return False, (f"measures differ: expected {_preview(expected)}, got {_preview(actual)}")
 
     if mode in {"set", "ordered"}:
         expected_normalized = [normalize_row(expected_columns, row) for row in expected_rows]

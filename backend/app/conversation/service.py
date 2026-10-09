@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from threading import RLock
-from typing import Literal
+from typing import Literal, cast
 from uuid import uuid4
 
 MAX_SQL_CHARS_IN_CONTEXT = 600
@@ -18,9 +18,12 @@ class ConversationAccessError(LookupError):
     """
 
 
+Role = Literal["user", "assistant", "system"]
+
+
 @dataclass(frozen=True)
 class ConversationTurn:
-    role: Literal["user", "assistant", "system"]
+    role: Role
     content: str
     sql: str | None = None
     tables: tuple[str, ...] = ()
@@ -46,7 +49,9 @@ class ConversationSession:
         sql: str | None = None,
         tables: tuple[str, ...] | list[str] = (),
     ) -> ConversationTurn:
-        turn = ConversationTurn(role=role, content=content, sql=sql, tables=tuple(tables))
+        turn = ConversationTurn(
+            role=cast(Role, role), content=content, sql=sql, tables=tuple(tables)
+        )
         self.turns.append(turn)
         self.updated_at = datetime.now(UTC)
         return turn

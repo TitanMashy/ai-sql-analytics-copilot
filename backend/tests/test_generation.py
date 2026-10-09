@@ -135,7 +135,7 @@ def test_repair_prompt_is_built_once_and_carries_hint_sql_and_context() -> None:
         "Show revenue",
         context,
         "SELECT missing FROM invoices",
-        "SQLSTATE 42703: column \"missing\" does not exist",
+        'SQLSTATE 42703: column "missing" does not exist',
         conversation_context="user: earlier",
     )
 

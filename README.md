@@ -95,10 +95,8 @@ The repair loop is deliberately narrow: only classified repairable parse/schema/
 Copy `.env.example` to `.env`, replace both owner and read-only password placeholders with distinct credentials, and keep `.env` out of Git. Initialize and seed the database before starting the application:
 
 ```bash
-docker compose up -d postgres
-docker compose run --rm backend alembic upgrade head
-docker compose run --rm backend python -m app.db.seed
-docker compose up --build -d
+docker compose up --build -d                  # starts PostgreSQL, runs migrations, then the backend and frontend
+docker compose --profile demo run --rm seed   # demo data (refuses to run when APP_ENV=production)
 ```
 
 Dashboard: http://localhost:3000. The backend is not published to the host; use `docker compose -f docker-compose.yml -f docker-compose.dev.yml up` to expose it on `127.0.0.1:8000` for debugging. Compose waits for PostgreSQL and backend readiness. The backend container is non-root with a read-only root filesystem, and both application images have health checks. Stop with `docker compose down`; do not add `--volumes` unless deleting database state is intended.

@@ -47,26 +47,94 @@ def _normalize_function_name(name: str) -> str:
 ALLOWED_FUNCTIONS = frozenset(
     {
         # aggregates
-        "COUNT", "SUM", "AVG", "MIN", "MAX", "STDDEV", "STDDEVPOP", "STDDEVSAMP",
-        "VARIANCE", "VARPOP", "VARSAMP", "MEDIAN", "PERCENTILECONT", "PERCENTILEDISC",
-        "STRINGAGG", "GROUPCONCAT",
+        "COUNT",
+        "SUM",
+        "AVG",
+        "MIN",
+        "MAX",
+        "STDDEV",
+        "STDDEVPOP",
+        "STDDEVSAMP",
+        "VARIANCE",
+        "VARPOP",
+        "VARSAMP",
+        "MEDIAN",
+        "PERCENTILECONT",
+        "PERCENTILEDISC",
+        "STRINGAGG",
+        "GROUPCONCAT",
         # date and time
-        "DATETRUNC", "TIMESTAMPTRUNC", "DATEPART", "EXTRACT", "DATE", "DATEADD", "DATESUB",
-        "DATEDIFF", "CURRENTDATE", "CURRENTTIMESTAMP", "CURRENTTIME", "NOW", "AGE",
-        "TOCHAR", "TIMETOSTR",
+        "DATETRUNC",
+        "TIMESTAMPTRUNC",
+        "DATEPART",
+        "EXTRACT",
+        "DATE",
+        "DATEADD",
+        "DATESUB",
+        "DATEDIFF",
+        "CURRENTDATE",
+        "CURRENTTIMESTAMP",
+        "CURRENTTIME",
+        "NOW",
+        "AGE",
+        "TOCHAR",
+        "TIMETOSTR",
         # math
-        "ROUND", "CEIL", "CEILING", "FLOOR", "ABS", "POWER", "POW", "SQRT", "LN", "LOG",
-        "EXP", "MOD", "SIGN", "TRUNC", "GREATEST", "LEAST",
+        "ROUND",
+        "CEIL",
+        "CEILING",
+        "FLOOR",
+        "ABS",
+        "POWER",
+        "POW",
+        "SQRT",
+        "LN",
+        "LOG",
+        "EXP",
+        "MOD",
+        "SIGN",
+        "TRUNC",
+        "GREATEST",
+        "LEAST",
         # conditional and casting
-        "CASE", "COALESCE", "NULLIF", "CAST", "TRYCAST", "IF",
+        "CASE",
+        "COALESCE",
+        "NULLIF",
+        "CAST",
+        "TRYCAST",
+        "IF",
         # strings
-        "LOWER", "UPPER", "LENGTH", "CONCAT", "CONCATWS", "TRIM", "LTRIM", "RTRIM",
-        "SUBSTRING", "SUBSTR", "REPLACE", "LEFT", "RIGHT", "INITCAP", "SPLITPART",
+        "LOWER",
+        "UPPER",
+        "LENGTH",
+        "CONCAT",
+        "CONCATWS",
+        "TRIM",
+        "LTRIM",
+        "RTRIM",
+        "SUBSTRING",
+        "SUBSTR",
+        "REPLACE",
+        "LEFT",
+        "RIGHT",
+        "INITCAP",
+        "SPLITPART",
         # window functions
-        "ROWNUMBER", "RANK", "DENSERANK", "PERCENTRANK", "CUMEDIST", "NTILE", "LAG", "LEAD",
-        "FIRSTVALUE", "LASTVALUE", "NTHVALUE",
+        "ROWNUMBER",
+        "RANK",
+        "DENSERANK",
+        "PERCENTRANK",
+        "CUMEDIST",
+        "NTILE",
+        "LAG",
+        "LEAD",
+        "FIRSTVALUE",
+        "LASTVALUE",
+        "NTHVALUE",
         # predicates that SQLGlot models as functions
-        "EXISTS", "ANY", "ALL",
+        "EXISTS",
+        "ANY",
+        "ALL",
     }
 )
 FORBIDDEN_NODE_KEYS = frozenset(
@@ -183,8 +251,8 @@ class SQLValidator:
             )
 
         # ``;;`` and a trailing ``;`` yield empty entries; they are not statements.
-        statements = [statement for statement in statements if statement is not None]
-        if not statements:
+        parsed = [statement for statement in statements if statement is not None]
+        if not parsed:
             return ValidationResult(
                 False,
                 None,
@@ -193,7 +261,7 @@ class SQLValidator:
                 [],
                 empty_complexity,
             )
-        if len(statements) != 1:
+        if len(parsed) != 1:
             return ValidationResult(
                 False,
                 None,
@@ -204,7 +272,7 @@ class SQLValidator:
                 error_code="QUERY_SECURITY_ERROR",
             )
 
-        expression = statements[0]
+        expression = parsed[0]
         cte_names = {cte.alias_or_name.casefold() for cte in expression.find_all(exp.CTE)}
         tables = [table for table in self._table_references(expression) if table not in cte_names]
         joins = len(list(expression.find_all(exp.Join)))
@@ -346,6 +414,10 @@ class SQLValidator:
         unsupported: list[str] = []
         for node in expression.walk():
             if not isinstance(node, exp.Func):
+                continue
+            if isinstance(node, exp.Connector):
+                # AND / OR / XOR are boolean operators. Some sqlglot releases also type them as
+                # ``Func``, which would make the allowlist reject every compound WHERE clause.
                 continue
             if isinstance(node, exp.Anonymous):
                 display = str(node.name or "")

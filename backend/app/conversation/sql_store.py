@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from typing import cast
 from uuid import uuid4
 
 from sqlalchemy import delete, func, select
@@ -22,6 +23,7 @@ from app.conversation.service import (
     ConversationSession,
     ConversationStore,
     ConversationTurn,
+    Role,
 )
 from app.db.operational import ConversationRecord, ConversationTurnRecord
 
@@ -108,11 +110,14 @@ class SqlConversationStore(ConversationStore):
     def count_active(self) -> int:
         cutoff = datetime.now(UTC) - self.ttl
         with self._session_factory() as session:
-            return session.scalar(
-                select(func.count())
-                .select_from(ConversationRecord)
-                .where(ConversationRecord.updated_at >= cutoff)
-            ) or 0
+            return (
+                session.scalar(
+                    select(func.count())
+                    .select_from(ConversationRecord)
+                    .where(ConversationRecord.updated_at >= cutoff)
+                )
+                or 0
+            )
 
     # -- turns -------------------------------------------------------------------------------
 
@@ -130,7 +135,9 @@ class SqlConversationStore(ConversationStore):
         tables: tuple[str, ...] | list[str] = (),
     ) -> ConversationTurn:
         owner_key = owner or ""
-        turn = ConversationTurn(role=role, content=content, sql=sql, tables=tuple(tables))
+        turn = ConversationTurn(
+            role=cast(Role, role), content=content, sql=sql, tables=tuple(tables)
+        )
         # A concurrent replica can create the same conversation between our read and write; the
         # second attempt then finds it and applies the ownership check.
         for _attempt in range(2):
