@@ -136,7 +136,6 @@ make eval          # text-to-SQL evaluation (PROVIDER=mock|gemini, SUBSET=mock)
 End to end and load:
 
 ```bash
-make e2e           # Playwright + axe against the Compose stack (mock provider)
 make loadtest      # k6 against a backend started with docker-compose.loadtest.yml
 ```
 
@@ -152,7 +151,7 @@ npm run build
 
 The backend smoke test exercises active vehicles, total revenue, top customers, monthly revenue, idle time, and fuel queries; it records SQL and total API latency.
 
-GitHub Actions (`.github/workflows/`) runs on every push: backend lint, format check, mypy, unit tests with coverage gates and a seeded validator fuzz run, `pip-audit`; an integration job against PostgreSQL (init script, migrations with a downgrade round trip, seed, privilege verification, `pytest -m integration` with skips turned into failures, the evaluation dataset check and the deterministic evaluation subset); frontend lint, tests (including the API contract check), build, and `npm audit`; Docker image builds with Trivy scans; and Playwright end-to-end tests with axe accessibility scans. Nightly it runs the full evaluation against the real model and a long fuzz run; weekly it runs the k6 load test. Releases are manual: tag, `docker compose up --build -d`, then run `scripts/smoke_test.py` (see [docs/operations.md](docs/operations.md)). Everything uses the mock provider unless a provider key is configured as a repository secret.
+GitHub Actions (`.github/workflows/`) runs on every push: backend lint, format check, mypy, unit tests with coverage gates and a seeded validator fuzz run, `pip-audit`; an integration job against PostgreSQL (init script, migrations with a downgrade round trip, seed, privilege verification, `pytest -m integration` with skips turned into failures, the evaluation dataset check and the deterministic evaluation subset); frontend lint, tests (including the API contract check), build, and `npm audit`; and Docker image builds with Trivy scans. Nightly it runs the full evaluation against the real model and a long fuzz run; weekly it runs the k6 load test. Releases are manual: tag, `docker compose up --build -d`, then run `scripts/smoke_test.py` (see [docs/operations.md](docs/operations.md)). Everything uses the mock provider unless a provider key is configured as a repository secret.
 
 ## Portfolio Notes
 
