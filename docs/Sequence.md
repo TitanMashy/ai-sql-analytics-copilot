@@ -8,6 +8,8 @@
 | **Method** | Read-only Git (`log`, `show`, `diff`, `ls-tree`, `grep`) and reading source. No code was changed, no tests or builds were run, nothing was installed. |
 | **Status of the working tree** | Clean when analysis began. Only this file was added. |
 
+> **Update:** this analysis was written at `440e7b9`, before anything after the baseline had been run. A stabilization pass has since executed the code and fixed seven defects; its results are in `progress.md` section 22. Statements below that code "has never been executed" describe the state at `440e7b9`.
+
 **Read this first about evidence.** Nothing after the baseline has ever been executed: no test run, linter, build, migration, or app start has happened since commit `abd5ac3`. Statements below about *what code does* come from reading it. Statements about *whether it works* are marked unverified. The baseline's own claims ("all tests pass") come from `progress.md` and are also not re-verified here.
 
 **Authorship note, stated plainly.** The two large post-baseline changes (`abd5ac3`, `e869768`/`23e1de5`) were produced by an AI coding agent in direct response to a plan (`sprints.md`) that was itself derived from an audit. They are not accidents: each addition traces to a numbered requirement. That is exactly why this document judges them on cost versus benefit rather than on whether they were "asked for".

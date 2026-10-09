@@ -123,8 +123,7 @@ def test_foreign_keys_are_enforced(database_session: Session) -> None:
 
 def test_schema_metadata_hides_personal_data_but_keeps_business_columns() -> None:
     tables = {
-        table.name: {column.name for column in table.columns}
-        for table in get_schema_metadata()
+        table.name: {column.name for column in table.columns} for table in get_schema_metadata()
     }
 
     assert tables["customers"].isdisjoint({"name", "email"})

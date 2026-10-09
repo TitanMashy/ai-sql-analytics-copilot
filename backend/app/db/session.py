@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from typing import Any
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
@@ -32,7 +33,7 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 if settings.database_url.startswith("sqlite"):
 
     @event.listens_for(engine, "connect")
-    def _enable_sqlite_foreign_keys(dbapi_connection: object, connection_record: object) -> None:
+    def _enable_sqlite_foreign_keys(dbapi_connection: Any, connection_record: object) -> None:
         del connection_record
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")

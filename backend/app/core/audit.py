@@ -130,4 +130,4 @@ def purge_audit_records(session_factory: Callable[[], Session], retention_days: 
     cutoff = datetime.now(UTC) - timedelta(days=retention_days)
     with session_factory() as session, session.begin():
         result = session.execute(delete(AuditRecord).where(AuditRecord.occurred_at < cutoff))
-        return result.rowcount or 0
+        return getattr(result, "rowcount", 0) or 0

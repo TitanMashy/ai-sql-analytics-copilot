@@ -72,15 +72,81 @@ KNOWN_GOOD = [
 ]
 
 TOKEN_POOL = [
-    "SELECT", "FROM", "WHERE", "GROUP BY", "ORDER BY", "LIMIT", "JOIN", "ON", "AS", "AND", "OR",
-    "UNION", "WITH", "DISTINCT", "HAVING", "(", ")", ",", ";", "*", "=", "<>", "1", "42", "'x'",
-    "NULL", "COUNT(*)", "SUM(id)", "vehicles", "trips", "invoices", "customers", "users",
-    "drivers", "payments", "secret_table", "pg_sleep(1)", "id", "status", "email", "name",
-    "DROP", "DELETE", "UPDATE", "INSERT", "INTO", "--", "/*", "*/", "\"", "'", "\\", "\x00",
-    "é", "🚗", "$$", "::int", "[", "]", "{", "}", "@", "#", "~", "||", "%", "?", ":name",
+    "SELECT",
+    "FROM",
+    "WHERE",
+    "GROUP BY",
+    "ORDER BY",
+    "LIMIT",
+    "JOIN",
+    "ON",
+    "AS",
+    "AND",
+    "OR",
+    "UNION",
+    "WITH",
+    "DISTINCT",
+    "HAVING",
+    "(",
+    ")",
+    ",",
+    ";",
+    "*",
+    "=",
+    "<>",
+    "1",
+    "42",
+    "'x'",
+    "NULL",
+    "COUNT(*)",
+    "SUM(id)",
+    "vehicles",
+    "trips",
+    "invoices",
+    "customers",
+    "users",
+    "drivers",
+    "payments",
+    "secret_table",
+    "pg_sleep(1)",
+    "id",
+    "status",
+    "email",
+    "name",
+    "DROP",
+    "DELETE",
+    "UPDATE",
+    "INSERT",
+    "INTO",
+    "--",
+    "/*",
+    "*/",
+    '"',
+    "'",
+    "\\",
+    "\x00",
+    "é",
+    "🚗",
+    "$$",
+    "::int",
+    "[",
+    "]",
+    "{",
+    "}",
+    "@",
+    "#",
+    "~",
+    "||",
+    "%",
+    "?",
+    ":name",
 ]
 
 _WORD = re.compile(r"[A-Za-z_]+")
+# sqlglot tokenizes "GROUP BY" / "ORDER BY" / "PARTITION BY" as one keyword, so a comment between
+# the two words is a parse error. The validator rejects that (fail closed), which is not a false
+# rejection of meaningful SQL, so the mutator keeps these pairs together.
+_KEYWORD_PAIR = re.compile(r"(?i)\b(group|order|partition)$")
 
 
 def _mutate(sql: str, rng: random.Random) -> str:
@@ -92,7 +158,16 @@ def _mutate(sql: str, rng: random.Random) -> str:
             mutated.append(piece)
             continue
         piece = _WORD.sub(lambda match: _recase(match.group(0), rng), piece)
-        piece = re.sub(r" +", lambda _: _whitespace(rng), piece)
+        piece = re.sub(
+            r" +",
+            lambda match, text=piece: (
+                " "
+                if _KEYWORD_PAIR.search(text[: match.start()])
+                and text[match.end() :].lower().startswith("by")
+                else _whitespace(rng)
+            ),
+            piece,
+        )
         mutated.append(piece)
     result = "".join(mutated)
     if rng.random() < 0.3:
@@ -181,7 +256,7 @@ def test_random_token_soup_never_crashes_and_acceptance_is_always_safe(
         " ",
         "\x00",
         "SELECT '",
-        "SELECT \"",
+        'SELECT "',
         "SELECT /* unterminated",
         "SELECT " + "(" * 500 + "1" + ")" * 500,
         "SELECT " + "1 + " * 2000 + "1",
@@ -191,6 +266,9 @@ def test_random_token_soup_never_crashes_and_acceptance_is_always_safe(
         "\n\n\n;;;\n",
         "SELECT 1 FROM " + ", ".join(["vehicles"] * 200),
     ],
+    # Explicit ids: pytest otherwise embeds the raw value in PYTEST_CURRENT_TEST, and the 50 KB
+    # statement exceeds the 32,767-character environment-variable limit on Windows.
+    ids=[f"hostile-{index}" for index in range(13)],
 )
 def test_hostile_inputs_are_rejected_or_safely_accepted_never_crash(
     validator: SQLValidator, hostile: str

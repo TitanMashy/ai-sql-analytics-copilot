@@ -207,7 +207,7 @@ class AnalyticsQueryService:
         telemetry = get_request_telemetry()
         if telemetry:
             telemetry.sql_execution_latency_ms += elapsed_ms
-        normalized_rows = normalize_rows([row._mapping for row in rows])
+        normalized_rows = normalize_rows([dict(row._mapping) for row in rows])
         column_types = {
             column: self._infer_column_type([row.get(column) for row in normalized_rows])
             for column in columns
@@ -241,7 +241,7 @@ class AnalyticsQueryService:
             return
         raw = connection.exec_driver_sql(f"EXPLAIN (FORMAT JSON) {statement}").scalar()
         try:
-            plan = json.loads(raw) if isinstance(raw, (str, bytes)) else raw
+            plan: Any = json.loads(raw) if isinstance(raw, (str, bytes)) else raw
             total_cost = float(plan[0]["Plan"]["Total Cost"])
         except (KeyError, IndexError, TypeError, ValueError):
             return  # an unexpected plan shape must not block an otherwise valid query
@@ -396,9 +396,7 @@ class AnalyticsQueryService:
                 "The analytics database denied permission for this query.",
                 403,
             )
-        if "no such table" in message or (
-            "does not exist" in message and "relation" in message
-        ):
+        if "no such table" in message or ("does not exist" in message and "relation" in message):
             return AnalyticsServiceError(
                 "TABLE_NOT_FOUND",
                 "The requested table does not exist.",

@@ -30,9 +30,7 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(
-        "ix_conversations_owner_updated_at", "conversations", ["owner", "updated_at"]
-    )
+    op.create_index("ix_conversations_owner_updated_at", "conversations", ["owner", "updated_at"])
     op.create_index("ix_conversations_updated_at", "conversations", ["updated_at"])
 
     op.create_table(
@@ -70,9 +68,7 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("ix_audit_log_occurred_at", "audit_log", ["occurred_at"])
-    op.create_index(
-        "ix_audit_log_principal_occurred_at", "audit_log", ["principal", "occurred_at"]
-    )
+    op.create_index("ix_audit_log_principal_occurred_at", "audit_log", ["principal", "occurred_at"])
     op.create_index("ix_audit_log_request_id", "audit_log", ["request_id"])
 
 

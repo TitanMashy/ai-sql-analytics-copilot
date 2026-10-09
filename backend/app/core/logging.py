@@ -38,7 +38,7 @@ class StructuredFormatter(logging.Formatter):
         ):
             if hasattr(record, field):
                 payload[field] = getattr(record, field)
-        if record.exc_info:
+        if record.exc_info and record.exc_info[0] is not None:
             payload["exception_type"] = record.exc_info[0].__name__
         return json.dumps(payload, default=str)
 

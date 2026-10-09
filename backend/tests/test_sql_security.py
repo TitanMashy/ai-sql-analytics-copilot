@@ -528,3 +528,31 @@ def test_slow_provider_returns_at_the_deadline_and_nothing_executes_afterwards()
     assert error.value.code == "REQUEST_DEADLINE_EXCEEDED"
     assert time.monotonic() - started < 0.4
     assert executed == []
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT COUNT(*) FROM vehicles WHERE status = 'active' AND fuel_type = 'diesel'",
+        "SELECT COUNT(*) FROM vehicles WHERE status = 'active' OR status = 'idle'",
+        "SELECT COUNT(*) FROM vehicles WHERE NOT (status = 'active' AND fuel_type = 'diesel')",
+        (
+            "SELECT COUNT(*) FROM vehicles "
+            "WHERE purchase_date >= '2024-01-01' AND purchase_date < '2025-01-01'"
+        ),
+    ],
+)
+def test_boolean_connectors_are_not_treated_as_functions(validator: SQLValidator, sql: str) -> None:
+    # Regression: some sqlglot releases type AND / OR as ``Func``, which made the function
+    # allowlist reject every query that combined two conditions.
+    result = validator.validate(sql)
+
+    assert result.valid, result.errors
+
+
+def test_connectors_do_not_hide_a_restricted_function(validator: SQLValidator) -> None:
+    result = validator.validate(
+        "SELECT COUNT(*) FROM vehicles WHERE status = 'active' AND pg_sleep(5) IS NOT NULL"
+    )
+
+    assert not result.valid

@@ -24,11 +24,7 @@ class GeminiProvider:
         prompt_builder: SQLPromptBuilder | None = None,
         client: Any | None = None,
     ) -> None:
-        api_key = (
-            settings.gemini_api_key.get_secret_value()
-            if settings.gemini_api_key
-            else ""
-        )
+        api_key = settings.gemini_api_key.get_secret_value() if settings.gemini_api_key else ""
         if not api_key.strip() and client is None:
             raise LLMProviderError(
                 "LLM_CONFIGURATION_ERROR",

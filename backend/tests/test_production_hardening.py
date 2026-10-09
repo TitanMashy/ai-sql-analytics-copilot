@@ -428,7 +428,9 @@ def test_metrics_are_disabled_in_production_without_a_token(monkeypatch) -> None
 
 
 def test_direct_sql_routes_are_mounted_when_enabled_in_this_environment() -> None:
-    paths = {getattr(route, "path", "") for route in app.routes}
+    # The OpenAPI document lists every mounted path; ``app.routes`` keeps included routers nested
+    # in newer FastAPI releases and no longer lists them flat.
+    paths = set(app.openapi()["paths"])
 
     assert get_settings().direct_sql_endpoints_enabled
     assert "/api/v1/analytics/query" in paths

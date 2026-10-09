@@ -1,6 +1,6 @@
 import re
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 
 from app.services.result_models import (
     KPI,
@@ -8,7 +8,6 @@ from app.services.result_models import (
     ResultAnalysis,
     ValueFormat,
 )
-
 
 COUNT_TOKENS = frozenset({"count", "number", "num", "qty", "quantity"})
 CURRENCY_TOKENS = frozenset(
@@ -74,6 +73,7 @@ class AnalyticsResultAnalyzer:
                 for value in non_null
             )
         )
+        kind: Literal["numeric", "categorical", "datetime", "identifier", "unknown"]
         if is_identifier:
             kind = "identifier"
         elif is_datetime:

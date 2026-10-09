@@ -53,6 +53,31 @@ def _active_conversations() -> float:
 
 
 metrics.set_active_conversations_source(_active_conversations)
+
+
+def _route_template(request: Request) -> str | None:
+    """The matched route's full path template, e.g. ``/api/v1/schema/tables/{table_name}``.
+
+    Newer FastAPI releases keep included routers nested, and ``scope["route"].path`` is then
+    relative to the include prefix (``/schema/tables/{table_name}``). The prefix is recovered
+    from the request path so metric and span labels stay identical across FastAPI versions.
+    """
+    route = request.scope.get("route")
+    template = getattr(route, "path", None)
+    if not template:
+        return None
+    path = request.scope.get("path") or ""
+    path_regex = getattr(route, "path_regex", None)
+    segments = [part for part in path.split("/") if part]
+    own = [part for part in template.split("/") if part]
+    extra = len(segments) - len(own)
+    if path_regex is not None and extra > 0:
+        prefix = "/" + "/".join(segments[:extra])
+        if path_regex.match(path[len(prefix) :]):
+            return prefix + template
+    return template
+
+
 if settings.auth_mode != "jwt":
     logger.warning(
         "AUTH_MODE=%s does not enforce signed tokens; do not use in production",
@@ -77,9 +102,7 @@ app.include_router(conversations_router, prefix="/api/v1")
 app.include_router(feedback_router, prefix="/api/v1")
 app.include_router(schema_router, prefix="/api/v1")
 app.add_api_route("/health", lambda: {"status": "ok"}, methods=["GET"], include_in_schema=False)
-app.add_api_route(
-    "/health/ready", readiness_check, methods=["GET"], include_in_schema=False
-)
+app.add_api_route("/health/ready", readiness_check, methods=["GET"], include_in_schema=False)
 
 
 def metrics_snapshot(request: Request) -> Response:
@@ -139,9 +162,8 @@ async def request_context_middleware(request: Request, call_next):
                     },
                 )
                 response = _internal_error_response(request_id)
-            route = request.scope.get("route")
             # The route template (never the raw path) keeps metric and span labels bounded.
-            endpoint = getattr(route, "path", None)
+            endpoint = _route_template(request)
             set_span_attribute(current, "http.route", endpoint or "unmatched")
             set_span_attribute(current, "http.status_code", response.status_code)
             if response.status_code >= 500:

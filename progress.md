@@ -13,8 +13,8 @@ The technically interesting parts are the modular LLM provider boundary, determi
 ## 2. Current Status
 
 ```text
-Current status: Sprints 1–11 implemented (Sprint 11 not yet executed/verified; see sprints.md)
-Sprint 12 (reliability, quality gates, operations) is planned in sprints.md.
+Current status: Sprints 1–12 implemented. The backend, frontend and Docker Compose stack were run and
+verified in the stabilization pass (section 22), with the exceptions listed there under "Not run".
 ```
 
 | Sprint | Status | Description |
@@ -29,7 +29,7 @@ Sprint 12 (reliability, quality gates, operations) is planned in sprints.md.
 | Sprint 8 | COMPLETE | Responsive Next.js dashboard, typed API integration, charts/results, Docker service, and frontend validation. |
 | Sprint 9 | COMPLETE | Production configuration, API limits/rate controls, metrics, health/readiness, provider reliability, frontend failure handling, deployment docs, and CI. |
 | Sprint 10 | COMPLETE | Final project documentation, portfolio narrative, verified handoff, and repository readiness. |
-| Sprint 11 | IMPLEMENTED, UNVERIFIED | Security hardening and correctness: narrowed proxy, JWT auth, per-principal limits, PII-free tenant-scoped analytics views, function allowlist, LIMIT enforcement, SQLSTATE errors and repair hints, request deadline, prompt/retrieval fixes, result-intelligence fixes. Written without running tests or the app; run the full suites before relying on it. |
+| Sprint 11 | IMPLEMENTED, VERIFIED IN STABILIZATION PASS | Security hardening and correctness: narrowed proxy, JWT auth, per-principal limits, PII-free tenant-scoped analytics views, function allowlist, LIMIT enforcement, SQLSTATE errors and repair hints, request deadline, prompt/retrieval fixes, result-intelligence fixes. Executed for the first time in the stabilization pass (section 22), which found and fixed the defects listed there. |
 
 Recent implementation commits include Sprint 7 `9554013`, Sprint 8 `5639dd7`, and Sprint 9 `e1291e4`. The Sprint 10 documentation updates are intentionally uncommitted.
 
@@ -582,18 +582,16 @@ There is no active sprint handoff. Treat the repository as the source of truth a
 ## 21. Current Git State
 
 - **Branch:** `main`
-- **HEAD:** `e1291e4 feat(production): harden application for production deployment`.
-- **Remote:** `origin/main` points to the Sprint 9 commit at the time of the Sprint 10 documentation pass.
-- **Recent commits:** Sprint 9 `e1291e4`, Sprint 8 `5639dd7`, Sprint 7 `9554013`, Sprint 6 `d685fef`.
-- **Starting worktree:** clean before Sprint 10 documentation edits.
-- **Current worktree:** documentation-only changes are uncommitted. Do not commit unless explicitly instructed.
+- **Baseline for the stabilization pass:** `6ea3d59` (clean tree). Earlier milestones: Sprint 11 `abd5ac3`, Sprint 12 `23e1de5` (`e869768` is an identical-tree duplicate), merge `17dba09`, `440e7b9`.
+- **Stabilization changes:** commit `fix: stabilize analytics copilot baseline` on top of `6ea3d59` (details in section 22).
+- **Older reference points:** Sprint 9 `e1291e4`, Sprint 8 `5639dd7`, Sprint 7 `9554013`, Sprint 6 `d685fef`.
 
 No secrets, API keys, passwords, or token values belong in this file.
 
 
-## Sprint 12: reliability, quality gates, operations (implemented, unverified)
+## Sprint 12: reliability, quality gates, operations (implemented; core verified in section 22)
 
-Written without running tests, builds, migrations, or the app. Run everything before relying on it.
+Written without running anything; the stabilization pass in section 22 later executed the backend, frontend, PostgreSQL/Redis integration and Docker Compose paths. Items that still need a real environment are listed there under "Not run".
 
 - State: `ConversationStore` interface with in-memory and PostgreSQL implementations (`app/conversation/sql_store.py`, migration `c3d91e5a7b20`, operational tables on their own base); `RateLimiter` interface with Redis implementation; optional SQL cache; `python -m app.jobs.purge`.
 - Safety: `EXPLAIN` cost pre-flight (`QUERY_COST_LIMIT`), `*_FILE` secrets with value-free startup errors, demo seed refuses production, validator now catches tokenizer/recursion errors.
@@ -601,4 +599,94 @@ Written without running tests, builds, migrations, or the app. Run everything be
 - Quality: PostgreSQL+Redis integration CI, golden evaluation suite (76 cases, `backend/evals`), validator fuzzing, coverage gates, mypy, supply-chain scans, Playwright+axe e2e, API contract test.
 - Ops: alerts, SLO rules, Grafana dashboard, five runbooks, Kubernetes examples, k6 load test, release workflow, smoke test, backup/restore/drill scripts, `docs/operations.md`, `evaluation.md`, `slos.md`, `capacity.md`, `threat-model.md`.
 - Frontend: result kept per message, restore on reload, delete, feedback, examples panel, pagination, CSV export, 401/429/504/422 states, schema-validated responses.
-- Pending real-environment evidence: first evaluation baseline, load-test saturation numbers, restore drill, rollback rehearsal, `make lock`, `ruff format`, mypy cleanup.
+- Pending real-environment evidence: first evaluation baseline against Gemini, load-test saturation numbers, restore drill, rollback rehearsal, `make lock` (no `requirements.lock` yet). `ruff format` and the mypy cleanup were completed in section 22.
+
+
+## 22. Stabilization pass (verified checkpoint)
+
+Scope: make the existing project run, test, build and start; no rewrite, no feature work, and none of the simplification candidates in `docs/Sequence.md` were touched.
+
+**Starting point:** `main` at `6ea3d59`, clean tree. Sprints 11 and 12 had been written without ever being executed. Environment used: Windows 10, Python 3.12.10, Node 24, Docker 29 with Compose 5. The installed FastAPI (0.143), Starlette (1.7) and sqlglot (27.29) are the newest releases the `pyproject.toml` ranges allow; there is no lockfile yet, so Docker builds resolve to the same newest versions.
+
+### What was broken and what fixed it
+
+| # | Defect | Root cause | Fix | Regression test |
+|---|---|---|---|---|
+| 1 | Any query with `AND` / `OR` was rejected: "Function And is not available" | In sqlglot 27.29, `exp.And`/`exp.Or` are subclasses of `exp.Func`, so the function allowlist in `SQLValidator._function_violations` treated boolean connectors as unknown functions. This made most generated SQL invalid, triggered the repair loop, and caused `REQUEST_DEADLINE_EXCEEDED` with Gemini. | Skip `exp.Connector` nodes in `_function_violations` (`backend/app/analytics/validator.py`). Restricted functions are still detected inside compound conditions. | `test_boolean_connectors_are_not_treated_as_functions`, `test_connectors_do_not_hide_a_restricted_function` in `tests/test_sql_security.py` |
+| 2 | Metric `route` labels and the log `endpoint` field lost the `/api/v1` prefix (e.g. `/analytics/ask`) | FastAPI 0.143 keeps included routers nested; `scope["route"].path` is relative to the include prefix. | `_route_template()` in `backend/app/main.py` restores the full template from the request path. Works with old and new FastAPI. | existing `test_http_metrics_use_the_route_template_not_the_raw_path` (was failing) |
+| 3 | `EXPLAIN` cost pre-flight did not reject an expensive self-join on a freshly seeded database | The seed never ran `ANALYZE`; without statistics the planner assumed ~2,900 rows for `trips` (50,000), so the estimated cost stayed below `QUERY_COST_LIMIT` until autovacuum ran. | `backend/app/db/seed.py` now runs `ANALYZE <table>` for each seeded table (PostgreSQL only). | existing integration test `test_expensive_query_is_rejected_before_it_runs` (was failing) |
+| 4 | `test_direct_sql_routes_are_mounted...` failed | The test read `app.routes`, which no longer lists included routers flat. Application behaviour was correct. | Test now reads paths from `app.openapi()`. | itself |
+| 5 | Fuzz test "known-good statements stay valid" failed | sqlglot cannot parse a comment between the words of `GROUP BY` / `ORDER BY` / `PARTITION BY`. The validator rejects such input (fail closed, safe); the mutator in the test inserted exactly that. | The test mutator keeps those keyword pairs together. Validator unchanged. | itself |
+| 6 | Two parametrized hostile-input tests errored on Windows | pytest put the 50 KB SQL string into `PYTEST_CURRENT_TEST`, above the 32,767-character environment-variable limit. | Explicit `ids=` on the parametrization. | itself |
+| 7 | CI would fail `ruff check`, `ruff format --check`, `mypy` | 2 unsorted import blocks, 14 unformatted files, 34 mypy errors in 10 files. | `ruff --fix` / `ruff format` (mechanical) and typing-only fixes (Optional narrowing in the validator, `Literal` kinds/roles, `Any` for untyped driver objects, `cast` for validated roles). No behaviour change. | mypy and ruff pass |
+
+Files changed (all under `backend/` unless noted): `app/analytics/validator.py`, `app/analytics/service.py`, `app/main.py`, `app/db/seed.py`, `app/db/session.py`, `app/db/schema_metadata.py`, `app/core/config.py`, `app/core/logging.py`, `app/core/audit.py`, `app/conversation/service.py`, `app/conversation/sql_store.py`, `app/services/result_analyzer.py`, plus formatting-only changes in `app/api/analytics.py`, `app/api/schema.py`, `app/llm/gemini_provider.py`, `app/services/visualization.py`, `alembic/versions/c3d91e5a7b20_*.py`, `evals/scoring.py`; tests: `test_sql_security.py`, `test_production_hardening.py`, `test_validator_fuzz.py`, `test_generation.py`, `test_analytics_smoke.py`, `test_database.py`; docs: `progress.md`, `README.md`, `docs/Sequence.md`.
+
+### Commands run and actual results
+
+| Area | Command | Result |
+|---|---|---|
+| Backend lint | `python -m ruff check .` | Passed |
+| Backend format | `python -m ruff format --check .` | Passed (106 files) |
+| Backend types | `python -m mypy` | Passed (68 source files) |
+| Backend unit tests | `python -m pytest -m "not integration"` | Passed: 404 passed (before the fixes: 6 failed, 2 errors) |
+| Coverage gates | `pytest ... --cov=app` then `scripts/check_coverage.py` | Passed: analytics 94.0%, services 94.7%, llm 86.9% (overall 92%) |
+| Integration | fresh PostgreSQL 16 + Redis 7 containers, `REQUIRE_INTEGRATION=1`, `python -m pytest -m integration` | Passed: 45 passed, 0 skipped (before the fixes: 1 failed) |
+| Migrations | `alembic upgrade head` on an empty database; `downgrade 9a999e64b310` then `upgrade head` | Passed (3 revisions up; 2 down, 2 up) |
+| Privilege model | `database/verify-readonly.sql` | Passed ("analytics_readonly permissions verified") |
+| Evaluation | `python -m evals.run_eval --check-references`; `--provider mock --subset mock` | Passed: 76 cases, 0 reference problems; mock subset: 9 cases, 5 scored, 5 passed (execution accuracy 1.0) |
+| Frontend lint | `npm run lint` | Passed |
+| Frontend tests | `npm test -- --run` | Passed: 11 files, 122 tests |
+| Frontend types | `npx tsc --noEmit` | Passed after `npm run build` (the `LayoutProps` type is generated by Next during the build, so bare `tsc` on a fresh checkout reports it missing) |
+| Frontend build | `npm run build` | Passed |
+| Compose config | `docker compose config -q` (base, `+dev`, `+loadtest`) | Passed |
+| Images | `docker compose up --build` in a separate project (`copilot-verify`) | Passed: backend, frontend, migrate, seed images built; all services healthy |
+| Mock end to end | `POST /api/v1/analytics/ask` through the frontend proxy | Passed: KPI (766 active vehicles), bar (top 10 customers), line (13 monthly revenue rows); summaries present |
+| Proxy allowlist | `POST /api/v1/analytics/query`, `/validate`, `GET /metrics` through the proxy | Passed: HTTP 404 |
+| Durable conversations | create, two asks, read back, `restart backend`, read back | Passed: 4 turns before and after restart; 4 `audit_log` rows written |
+| Gemini (live) | two questions with `LLM_MODE=gemini`, `gemini-flash-latest`, throwaway backend | Passed: both answered (4.5 s and 8.6 s), both questions use `AND` |
+
+The verification stack used its own PostgreSQL and was removed afterwards. The running `ai-sql-analytics-copilot` stack and its database volume were not modified; it is still running the images built before these fixes (see below).
+
+### Not run / blocked
+
+- Playwright + axe end-to-end tests (`make e2e`), the k6 load test, Trivy image scans, `pip-audit`, `npm audit`, and the long fuzz run: not run in this pass.
+- Lockfile (`make lock` / `lock-check`): no `backend/requirements.lock` exists; the CI step only warns.
+- JWT authentication and tenant isolation were verified by unit and integration tests only, not by a live JWT request against the Compose stack (the Compose run used `AUTH_MODE=disabled`, which production rejects).
+- Gemini was verified with two live calls only; it is not part of the deterministic suite. External failures (quota, latency, model changes) are not reproducible tests.
+- Backup/restore drill, rollback rehearsal, release workflow, Kubernetes and ops assets: not exercised.
+- Earlier slowness seen with Gemini (`REQUEST_DEADLINE_EXCEEDED`) matches defect 1 (valid SQL rejected, so a repair call consumed the 25 s budget). That causal link is inferred from the logs and from the two successful calls above; the original failing question was not replayed.
+
+### How to start the verified application
+
+```bash
+# .env is required (copy .env.example and set both database passwords; LLM_MODE=mock needs no key)
+docker compose up --build -d
+docker compose --profile demo run --rm seed      # demo data; refuses to run when APP_ENV=production
+# Dashboard: http://localhost:3000     Readiness: http://localhost:3000/api/v1/health/ready
+```
+
+If you already have a stack from before this pass, rebuild so it picks up the fixes: `docker compose up --build -d` (database data is kept). Never add `--volumes` unless you mean to delete it.
+
+### Run the tests
+
+```bash
+cd backend && python -m venv .venv && .venv/Scripts/python -m pip install -e ".[dev]"   # Linux/macOS: .venv/bin/python
+.venv/Scripts/python -m pytest -m "not integration"
+.venv/Scripts/python -m ruff check . && .venv/Scripts/python -m ruff format --check . && .venv/Scripts/python -m mypy
+cd ../frontend && npm ci && npm run lint && npm test -- --run && npm run build
+```
+
+Integration tests need PostgreSQL with the `analytics_readonly` role (run `database/init/01-analytics-role.sql`), `alembic upgrade head`, the seed, `DATABASE_URL`, `ANALYTICS_DATABASE_URL`, `REDIS_URL`, and `REQUIRE_INTEGRATION=1`; see `.github/workflows/ci.yml`.
+
+### Mock-provider demonstration
+
+With `LLM_MODE=mock`, the mock provider answers five questions deterministically: "What is the total number of active vehicles?", "What were the top 10 customers by revenue?", "Show monthly revenue for the last 12 months.", "Which vehicles had the highest idle time?", "Show fuel consumption by vehicle.". Ask them in the dashboard, or `POST /api/v1/analytics/ask` with `{"question": "..."}`.
+
+### Files to study next
+
+`backend/app/services/generation.py` (orchestration and repair loop), `backend/app/analytics/validator.py`, `backend/app/analytics/service.py`, `backend/app/llm/prompt.py`, `backend/app/db/analytics_surface.py` with migration `b7c2d41f8a10`, `backend/app/core/auth.py`, `backend/app/core/rate_limit.py`, `backend/app/main.py`, `frontend/next.config.ts`, `frontend/components/analytics/analytics-dashboard.tsx`, and `docs/Sequence.md`.
+
+### Checkpoint commit
+
+Verified state: the commit titled `fix: stabilize analytics copilot baseline`, directly on top of `6ea3d59`. The results above were obtained on this change set as a working tree before it was committed.

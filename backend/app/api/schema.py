@@ -3,7 +3,6 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from app.core.auth import get_principal
 from app.core.rate_limit import enforce_rate_limit
 from app.db.schema_metadata import TableMetadata, get_schema_metadata
-from app.services.business_definitions import BUSINESS_DEFINITIONS
 from app.schemas.feedback import BusinessDefinitionResponse, BusinessDefinitionsResponse
 from app.schemas.schema import (
     ColumnMetadataResponse,
@@ -12,6 +11,7 @@ from app.schemas.schema import (
     TableListResponse,
     TableMetadataResponse,
 )
+from app.services.business_definitions import BUSINESS_DEFINITIONS
 
 router = APIRouter(
     prefix="/schema",

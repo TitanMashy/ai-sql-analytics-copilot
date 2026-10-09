@@ -4,7 +4,7 @@ import os
 from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field, SecretStr, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -135,12 +135,8 @@ class Settings(BaseSettings):
 
     # Prompt-to-SQL cache (off by default) -----------------------------------------------------
     sql_cache_enabled: bool = Field(default=False, validation_alias="SQL_CACHE_ENABLED")
-    sql_cache_ttl_seconds: int = Field(
-        default=300, gt=0, validation_alias="SQL_CACHE_TTL_SECONDS"
-    )
-    sql_cache_max_entries: int = Field(
-        default=1000, gt=0, validation_alias="SQL_CACHE_MAX_ENTRIES"
-    )
+    sql_cache_ttl_seconds: int = Field(default=300, gt=0, validation_alias="SQL_CACHE_TTL_SECONDS")
+    sql_cache_max_entries: int = Field(default=1000, gt=0, validation_alias="SQL_CACHE_MAX_ENTRIES")
 
     # Query cost pre-flight (PostgreSQL planner cost units; unset disables it) ----------------
     query_cost_limit: float | None = Field(default=1_000_000.0, validation_alias="QUERY_COST_LIMIT")
@@ -258,9 +254,7 @@ class Settings(BaseSettings):
             self.redis_url and self.redis_url.get_secret_value().strip()
         ):
             raise ValueError("REDIS_URL is required when RATE_LIMIT_BACKEND=redis.")
-        if self.conversation_store == "postgres" and not self.database_url.startswith(
-            "postgresql"
-        ):
+        if self.conversation_store == "postgres" and not self.database_url.startswith("postgresql"):
             raise ValueError("CONVERSATION_STORE=postgres requires a PostgreSQL DATABASE_URL.")
         if self.audit_sink in {"database", "both"} and not self.database_url.startswith(
             "postgresql"
@@ -344,7 +338,7 @@ def _describe_validation_error(error: ValidationError) -> str:
 @lru_cache
 def get_settings() -> Settings:
     """Load and validate configuration, failing with a precise, value-free message."""
-    overrides = read_secret_files()
+    overrides: dict[str, Any] = dict(read_secret_files())
     try:
         return Settings(**overrides)
     except ValidationError as error:

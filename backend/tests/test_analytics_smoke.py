@@ -17,8 +17,7 @@ SMOKE_QUERIES = [
     ),
     (
         "total_revenue",
-        "SELECT SUM(total_amount) AS total_revenue FROM invoices "
-        "WHERE status <> 'cancelled'",
+        "SELECT SUM(total_amount) AS total_revenue FROM invoices WHERE status <> 'cancelled'",
     ),
     (
         "top_customers",
@@ -60,16 +59,12 @@ def smoke_client() -> Generator[TestClient, None, None]:
     @event.listens_for(engine, "connect")
     def add_postgres_date_format(dbapi_connection, connection_record) -> None:
         del connection_record
-        dbapi_connection.create_function(
-            "to_char", 2, lambda value, _format: str(value)[:7]
-        )
+        dbapi_connection.create_function("to_char", 2, lambda value, _format: str(value)[:7])
 
     with engine.begin() as connection:
         connection.execute(text("CREATE TABLE customers (id INTEGER, company_name TEXT)"))
         connection.execute(
-            text(
-                "CREATE TABLE vehicles (id INTEGER, status TEXT, registration_number TEXT)"
-            )
+            text("CREATE TABLE vehicles (id INTEGER, status TEXT, registration_number TEXT)")
         )
         connection.execute(
             text(
@@ -86,9 +81,7 @@ def smoke_client() -> Generator[TestClient, None, None]:
                 "liters REAL, total_cost REAL)"
             )
         )
-        connection.execute(
-            text("INSERT INTO customers VALUES (1, 'Northstar'), (2, 'Harbor')")
-        )
+        connection.execute(text("INSERT INTO customers VALUES (1, 'Northstar'), (2, 'Harbor')"))
         connection.execute(
             text(
                 "INSERT INTO vehicles VALUES (1, 'active', 'FLEET-1'), "
@@ -104,9 +97,7 @@ def smoke_client() -> Generator[TestClient, None, None]:
                 "(4, 2, 250, 'cancelled', '2026-02-21')"
             )
         )
-        connection.execute(
-            text("INSERT INTO trips VALUES (1, 1, 20), (2, 1, 40), (3, 2, 15)")
-        )
+        connection.execute(text("INSERT INTO trips VALUES (1, 1, 20), (2, 1, 40), (3, 2, 15)"))
         connection.execute(
             text("INSERT INTO fuel_records VALUES (1, 1, 100, 150), (2, 2, 80, 120)")
         )
