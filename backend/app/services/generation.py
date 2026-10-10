@@ -11,6 +11,7 @@ from app.analytics.service import AnalyticsQueryService, AnalyticsServiceError, 
 from app.conversation.service import ConversationStore, get_conversation_memory
 from app.core.auth import Principal
 from app.core.deadline import Deadline
+from app.core.llm_tracing import stage
 from app.core.metrics import metrics
 from app.core.telemetry import get_request_telemetry
 from app.llm.prompt import SQLPromptBuilder
@@ -87,13 +88,36 @@ class SQLGenerationService:
         conversation_id: str | None = None,
         principal: Principal | None = None,
     ) -> GeneratedQuery:
-        deadline = Deadline(self.request_deadline_seconds)
-        context, resolved_context = self._prepare(
-            question, conversation_context, conversation_id, principal
-        )
-        return self._generate(question, context, resolved_context, deadline)
+        with stage("analytics.generate", operation="generate", **self._provider_info()):
+            deadline = Deadline(self.request_deadline_seconds)
+            context, resolved_context = self._prepare(
+                question, conversation_context, conversation_id, principal
+            )
+            return self._generate(question, context, resolved_context, deadline)
 
     def ask(
+        self,
+        question: str,
+        request_id: str | None = None,
+        conversation_context: str | None = None,
+        conversation_id: str | None = None,
+        principal: Principal | None = None,
+    ) -> AskedQuery:
+        with stage("analytics.ask", operation="ask", **self._provider_info()) as run:
+            asked = self._ask(
+                question, request_id, conversation_context, conversation_id, principal
+            )
+            telemetry = get_request_telemetry()
+            run.set(
+                repair_count=telemetry.repair_count if telemetry else 0,
+                row_count=asked.result.row_count,
+            )
+            return asked
+
+    def _provider_info(self) -> dict[str, str | None]:
+        return {"provider": self.provider.name, "model": getattr(self.provider, "model", None)}
+
+    def _ask(
         self,
         question: str,
         request_id: str | None = None,
@@ -148,7 +172,7 @@ class SQLGenerationService:
                     extra={"request_id": request_id, "repair_count": repair_attempts},
                 )
                 generated = self._repair(
-                    question, generated, error, context, resolved_context, deadline
+                    question, generated, error, context, resolved_context, deadline, repair_attempts
                 )
 
     # -- pipeline steps ---------------------------------------------------------------------
@@ -189,20 +213,22 @@ class SQLGenerationService:
         context: SchemaContext,
         resolved_context: str | None,
         deadline: Deadline,
+        attempt: int = 1,
     ) -> GeneratedQuery:
         """Ask the provider to fix rejected SQL. The result is validated again by the caller."""
-        # The hint carries the identifier or SQLSTATE detail that makes a repair possible;
-        # the public message is deliberately generic and would turn repair into a re-roll.
-        repair_call = partial(
-            self.provider.repair_sql,
-            question,
-            generated.sql,
-            error.repair_hint or error.message,
-            context,
-            conversation_context=resolved_context,
-        )
-        repaired = self._call_provider(repair_call, deadline)
-        return self._to_generated_query(question, context, repaired)
+        with stage("repair", repair_attempt=attempt, error_code=error.code):
+            # The hint carries the identifier or SQLSTATE detail that makes a repair possible;
+            # the public message is deliberately generic and would turn repair into a re-roll.
+            repair_call = partial(
+                self.provider.repair_sql,
+                question,
+                generated.sql,
+                error.repair_hint or error.message,
+                context,
+                conversation_context=resolved_context,
+            )
+            repaired = self._call_provider(repair_call, deadline)
+            return self._to_generated_query(question, context, repaired)
 
     def _prepare(
         self,
@@ -220,8 +246,11 @@ class SQLGenerationService:
         if conversation_id:
             # Raises ConversationAccessError for a conversation owned by someone else.
             self.conversation_memory.assert_access(conversation_id, owner)
-        resolved_context = self._resolve_context(conversation_id, conversation_context, owner)
-        return self.retriever.retrieve(question, resolved_context), resolved_context
+        with stage("context_retrieval") as run:
+            resolved_context = self._resolve_context(conversation_id, conversation_context, owner)
+            context = self.retriever.retrieve(question, resolved_context)
+            run.set(tables_count=len(context.table_names))
+        return context, resolved_context
 
     def _generate(
         self,

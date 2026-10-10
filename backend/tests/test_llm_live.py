@@ -54,7 +54,7 @@ def test_live_gemini_generates_valid_sql() -> None:
 
 def test_live_ollama_generates_valid_sql() -> None:
     model = os.environ.get("LLM_MODEL", "").strip()
-    base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+    base_url = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
     if not model:
         pytest.skip("LLM_MODEL is not set (the Ollama model to test, for example one you pulled)")
     try:

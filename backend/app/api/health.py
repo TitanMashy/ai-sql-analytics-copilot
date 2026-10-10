@@ -164,6 +164,7 @@ def diagnostics(
                 "conversation_store": settings.conversation_store,
                 "audit_sink": settings.audit_sink,
                 "query_cost_limit": settings.query_cost_limit,
+                "langsmith_tracing": settings.langsmith_tracing,
                 "direct_sql_endpoints": settings.direct_sql_endpoints_enabled,
             },
         }

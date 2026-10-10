@@ -28,6 +28,12 @@ services:
       # host.docker.internal (Docker Desktop on Mac and Windows; mapped below for Linux).
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       LLM_MAX_RETRIES: ${LLM_MAX_RETRIES:-1}
+      # Optional LangSmith tracing. Off by default. When on, only sanitized metadata (ids,
+      # provider, model, outcome codes, counts) is sent: never questions, SQL, rows or tenants.
+      LANGSMITH_TRACING: ${LANGSMITH_TRACING:-false}
+      LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
+      LANGSMITH_PROJECT: ${LANGSMITH_PROJECT:-analytics-copilot}
+      LANGSMITH_ENDPOINT: ${LANGSMITH_ENDPOINT:-}
       # Removed names, forwarded only so the app can refuse to start with a clear message
       # instead of silently running a different provider than the one in an old .env.
       LLM_MODE: ${LLM_MODE:-}

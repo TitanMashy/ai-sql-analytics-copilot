@@ -497,3 +497,23 @@ def test_both_removed_names_are_reported_together() -> None:
     message = str(error.value)
     assert "LLM_MODE" in message and "GEMINI_MODEL" in message
     assert "gemini-x" not in message  # the value is never printed
+
+
+def test_each_retry_is_counted_by_provider() -> None:
+    from prometheus_client import generate_latest
+
+    from app.core.metrics import metrics
+
+    def retries() -> float:
+        for family in metrics.registry.collect():
+            if family.name == "analytics_llm_retries":
+                return sum(s.value for s in family.samples if s.name.endswith("_total"))
+        return 0.0
+
+    before = retries()
+    chat = FakeChatModel(httpx.ConnectError("refused"), httpx.ConnectError("refused"), GOOD)
+
+    _provider(chat, max_retries=2).generate_sql("q", _context())
+
+    assert retries() == before + 2
+    assert b"analytics_llm_retries_total" in generate_latest(metrics.registry)

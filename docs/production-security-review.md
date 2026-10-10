@@ -32,6 +32,15 @@ This review covers the current browser-to-API flow: Next.js dashboard, FastAPI r
 | Containers | Backend is non-root, runtime-only, read-only root filesystem, temporary `/tmp`, dropped capabilities and health checks. No keys are copied into Docker images. |
 | Frontend | Same-origin proxy by default; no backend secrets in client variables; result/error payloads are runtime-checked; generated SQL and backend text are rendered as text; invalid chart metadata is dropped and chart failures are isolated. |
 
+### Model providers and tracing
+
+- The provider (`mock`, `gemini`, `ollama`) is chosen explicitly and never falls back to another; a
+  removed or unknown setting stops startup. All providers' SQL goes through the same validation and
+  read-only, tenant-scoped execution. Result rows are never sent to a model.
+- Optional LangSmith tracing is off by default, sends allowlisted metadata with empty inputs, cannot
+  block or fail a request, and is covered by tests that read the real bytes sent. See
+  [security.md](security.md) and [llm-providers.md](llm-providers.md).
+
 ## Known Limitations
 
 - Rate limiting and metrics are per process. Multi-instance deployments need a shared limiter at a gateway or shared store. `FORWARDED_ALLOW_IPS=*` in Compose is safe only because the backend is not published; narrow it if that changes.
