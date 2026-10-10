@@ -7,6 +7,8 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 ARG INTERNAL_API_URL=http://backend:8000
 ENV INTERNAL_API_URL=${INTERNAL_API_URL}
+ARG NEXT_PUBLIC_REQUEST_TIMEOUT_MS=30000
+ENV NEXT_PUBLIC_REQUEST_TIMEOUT_MS=${NEXT_PUBLIC_REQUEST_TIMEOUT_MS}
 COPY --from=dependencies /app/node_modules ./node_modules
 COPY . .
 RUN npm run build

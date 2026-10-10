@@ -24,8 +24,10 @@ import type {
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? "";
 // The backend gives up on a question after REQUEST_DEADLINE_SECONDS (25 by default). Keep this
-// above that, so the server reports the timeout before the browser abandons the request.
-const requestTimeoutMs = 30_000;
+// above that, so the server reports the timeout before the browser abandons the request. A slow
+// local model needs more: set NEXT_PUBLIC_REQUEST_TIMEOUT_MS at build time (Compose:
+// FRONTEND_REQUEST_TIMEOUT_MS). The same value bounds the server-side proxy (next.config.ts).
+const requestTimeoutMs = Number(process.env.NEXT_PUBLIC_REQUEST_TIMEOUT_MS) || 30_000;
 
 export class ApiError extends Error {
   constructor(

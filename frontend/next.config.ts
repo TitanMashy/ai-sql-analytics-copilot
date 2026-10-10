@@ -20,6 +20,10 @@ export const proxiedRoutes = [
 
 const isProduction = process.env.NODE_ENV === "production";
 
+// How long the proxy waits for the backend. It must match the browser's timeout (lib/api.ts), or
+// the proxy would give up at its 30-second default first.
+const requestTimeoutMs = Number(process.env.NEXT_PUBLIC_REQUEST_TIMEOUT_MS) || 30_000;
+
 // Next.js emits inline bootstrap scripts, so script-src needs 'unsafe-inline'; development
 // additionally needs 'unsafe-eval' for React's debugging tooling.
 const contentSecurityPolicy = [
@@ -49,6 +53,7 @@ export const securityHeaders = [
 const nextConfig: NextConfig = {
   reactCompiler: true,
   output: "standalone",
+  experimental: { proxyTimeout: requestTimeoutMs },
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },
