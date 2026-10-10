@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       APP_ENV: test
-      LLM_MODE: mock
+      LLM_PROVIDER: mock
       DATABASE_URL: sqlite:///./ci-app.db
       ANALYTICS_DATABASE_URL: sqlite:///./ci-analytics.db
       FUZZ_ITERATIONS: ${{ inputs.fuzz_iterations || '20000' }}
@@ -112,7 +112,7 @@ jobs:
           DATABASE_URL: postgresql+psycopg://app:ci-owner-password@localhost:5432/app
           ANALYTICS_DATABASE_URL: postgresql+psycopg://analytics_readonly:ci-readonly-password@localhost:5432/app
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-2.5-flash' }}
+          LLM_MODEL: ${{ vars.LLM_MODEL || 'gemini-3.6-flash' }}
         run: >-
           python -m evals.run_eval --provider "$PROVIDER"
           --report eval-report.json --markdown eval-summary.md --trend eval-trend.jsonl

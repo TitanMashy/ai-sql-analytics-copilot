@@ -28,7 +28,7 @@ A short, honest model of what the system protects, from whom, and how. It comple
 
 ```
 browser -> frontend proxy -> backend -> validator -> read-only transaction -> analytics views -> tables
-                                 \-> LLM provider (external, untrusted output)
+                                 \-> LLM provider (Gemini over the internet, or a local Ollama; untrusted output)
 ```
 
 | # | Threat | Control (defense in depth) | Residual risk |

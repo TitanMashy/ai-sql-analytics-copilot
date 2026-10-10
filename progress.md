@@ -15,6 +15,8 @@ The technically interesting parts are the modular LLM provider boundary, determi
 ```text
 Current status: Sprints 1–12 implemented. The backend, frontend and Docker Compose stack were run and
 verified in the stabilization pass (section 22), with the exceptions listed there under "Not run".
+Sprint 13 (LangChain model boundary and explicit provider switching) is complete and recorded in section 23.
+Sprints 14 and 15 are planned in `final_sprints.md`.
 ```
 
 | Sprint | Status | Description |
@@ -110,7 +112,7 @@ Responsibilities:
 
 - **FastAPI/API layer:** validates request bodies, attaches request IDs, exposes OpenAPI routes, and maps internal errors to structured responses. It does not execute SQL directly.
 - **SchemaRetriever:** selects relevant application tables and business definitions using deterministic keyword/column relevance. It is ready for a future embedding implementation but has no vector database.
-- **LLMProvider:** abstracts SQL generation and repair. `GeminiProvider` is the configured real provider; `MockLLMProvider` supplies deterministic queries for tests and demos.
+- **LLMProvider:** abstracts SQL generation and repair. `LangChainSQLProvider` (Gemini or Ollama, built by `app/llm/factory.py`) is the real provider; `MockLLMProvider` supplies deterministic queries for tests and demos.
 - **SQLGenerationService:** coordinates question, schema context, provider output, bounded repair, and the existing analytics execution service. Generated SQL is never treated as trusted.
 - **SQLValidator:** parses and validates PostgreSQL SQL before execution.
 - **AnalyticsQueryService:** uses `ANALYTICS_DATABASE_URL`, applies PostgreSQL statement timeout, executes normalized SQL, enforces result limits, classifies database errors, and normalizes rows.
@@ -141,10 +143,10 @@ Responsibilities:
 ### AI
 
 - `LLMProvider` protocol in `backend/app/llm/provider.py`
-- `GeminiProvider` in `backend/app/llm/gemini_provider.py`
+- `LangChainSQLProvider` in `backend/app/llm/langchain_provider.py`, built by `backend/app/llm/factory.py`
 - `MockLLMProvider` in `backend/app/llm/mock_provider.py`
 - Structured prompt and parser modules
-- Real provider selection is controlled by `LLM_MODE`; the example mode is `mock`. Production mode rejects mock mode and requires a configured real provider. Never copy secrets from local environment files into documentation or commits.
+- Provider selection is controlled by `LLM_PROVIDER` (`mock`, `gemini`, `ollama`) and `LLM_MODEL`; the example mode is `mock`. Production mode rejects mock mode and requires a configured real provider. Never copy secrets from local environment files into documentation or commits.
 
 ### Frontend
 
@@ -172,14 +174,12 @@ The provider interface defines:
 - `generate_sql(question, schema_context, conversation_context=None)`
 - `repair_sql(question, original_sql, error_message, schema_context)`
 
-`GeminiProvider`:
+`LangChainSQLProvider` (`app/llm/langchain_provider.py`), used for `gemini` and `ollama`:
 
-- Reads `GEMINI_API_KEY` and `GEMINI_MODEL` from settings.
-- Uses the official Google Gemini SDK.
-- Sends the SQL prompt with `response_mime_type="application/json"` and the shared structured response schema.
-- Parses response text through `parse_llm_response`; malformed or empty output becomes a controlled `LLMProviderError`.
-- Uses the same provider path for repair prompts.
-- Does not execute SQL.
+- Wraps a LangChain chat model built by `app/llm/factory.py` (`ChatGoogleGenerativeAI` or `ChatOllama`); no other module constructs a provider client.
+- Sends the rules as the system message and the data as the user message, in JSON mode, and parses the reply through the shared `parse_llm_response`; empty or malformed output is a controlled `INVALID_LLM_RESPONSE`.
+- Classifies failures with `app/llm/errors.py` (walks the exception chain; never echoes provider text) and applies the only transient retry (`1 + LLM_MAX_RETRIES` attempts, infrastructure failures only). LangChain's own retries are off.
+- Uses the same path for repair prompts. Does not validate or execute SQL.
 
 `MockLLMProvider`:
 
@@ -187,7 +187,7 @@ The provider interface defines:
 - Is required for tests, CI, and credential-free local demos.
 - Must be preserved when adding or changing providers.
 
-Provider selection lives in `app/services/llm_dependencies.py`. Adding another provider should require a new implementation plus a configuration branch, not changes to API routes, schema retrieval, SQL validation, or query execution.
+Provider selection lives in `app/llm/factory.py` (called from `app/services/llm_dependencies.py`). Adding another provider should require a new factory branch, not changes to API routes, schema retrieval, SQL validation, or query execution.
 
 The prompt builder includes PostgreSQL dialect rules, the user question, relevant schema, relationships, business definitions, read-only restrictions, and structured output instructions. Credentials and infrastructure URLs are never included.
 
@@ -206,7 +206,7 @@ Relevant schema + business definitions
 SQLPromptBuilder
         |
         v
-GeminiProvider or MockLLMProvider
+LangChainSQLProvider (Gemini or Ollama) or MockLLMProvider
         |
         v
 Structured LLM response parser
@@ -361,9 +361,11 @@ Values below are documented formats only. Real values belong in ignored `.env`, 
 | `ANALYTICS_DATABASE_URL` | Analytics execution | Restricted read-only PostgreSQL connection, separate from the owner URL. |
 | `POSTGRES_PASSWORD` | Fresh Compose database | Owner role password; supply at runtime only. |
 | `ANALYTICS_DATABASE_PASSWORD` | Fresh Compose database | Distinct read-only role password; supply at runtime only. |
-| `GEMINI_API_KEY` | Only when `LLM_MODE=gemini` | Google Gemini credential; never print or commit it. |
-| `GEMINI_MODEL` | No; default `gemini-2.5-flash` | Gemini model name. |
-| `LLM_MODE` | No; default `mock` | `mock` or `gemini`; mock is disabled in production. |
+| `GEMINI_API_KEY` | Only when `LLM_PROVIDER=gemini` | Google Gemini credential; never print or commit it. |
+| `LLM_PROVIDER` | No; default `mock` | `mock`, `gemini` or `ollama`; mock is disabled in production. Replaces `LLM_MODE`, which now stops startup. |
+| `LLM_MODEL` | Gemini: no (default `gemini-3.6-flash`); Ollama: yes | Model id. Replaces `GEMINI_MODEL`, which now stops startup. |
+| `OLLAMA_BASE_URL` | No | Default `http://localhost:11434` (`host.docker.internal` in Compose). |
+| `LLM_MAX_RETRIES` | No; default `1` | Extra attempts after a transient provider failure. |
 | `LOG_LEVEL` | No; default `INFO` | Structured application log threshold. |
 | `LLM_TIMEOUT_SECONDS` | No; default `30` | Provider timeout; transient Gemini 5xx retries are bounded. |
 | `DATABASE_POOL_SIZE` | No; default `5` | SQLAlchemy pool size per engine. |
@@ -659,7 +661,7 @@ The verification stack used its own PostgreSQL and was removed afterwards. The r
 ### How to start the verified application
 
 ```bash
-# .env is required (copy .env.example and set both database passwords; LLM_MODE=mock needs no key)
+# .env is required (copy .env.example and set both database passwords; LLM_PROVIDER=mock needs no key)
 docker compose up --build -d
 docker compose --profile demo run --rm seed      # demo data; refuses to run when APP_ENV=production
 # Dashboard: http://localhost:3000     Readiness: http://localhost:3000/api/v1/health/ready
@@ -680,7 +682,7 @@ Integration tests need PostgreSQL with the `analytics_readonly` role (run `datab
 
 ### Mock-provider demonstration
 
-With `LLM_MODE=mock`, the mock provider answers five questions deterministically: "What is the total number of active vehicles?", "What were the top 10 customers by revenue?", "Show monthly revenue for the last 12 months.", "Which vehicles had the highest idle time?", "Show fuel consumption by vehicle.". Ask them in the dashboard, or `POST /api/v1/analytics/ask` with `{"question": "..."}`.
+With `LLM_PROVIDER=mock`, the mock provider answers five questions deterministically: "What is the total number of active vehicles?", "What were the top 10 customers by revenue?", "Show monthly revenue for the last 12 months.", "Which vehicles had the highest idle time?", "Show fuel consumption by vehicle.". Ask them in the dashboard, or `POST /api/v1/analytics/ask` with `{"question": "..."}`.
 
 ### Simplification since this checkpoint
 
@@ -693,3 +695,59 @@ Dead code, the OpenAI provider, the SQL cache, OpenTelemetry tracing, the Redis 
 ### Checkpoint commit
 
 Verified state: the commit titled `fix: stabilize analytics copilot baseline`, directly on top of `6ea3d59`. The results above were obtained on this change set as a working tree before it was committed.
+
+
+## 23. Sprint 13: LangChain model boundary and explicit provider switching
+
+**Status:** complete against the Sprint 13 checklist in `final_sprints.md`, with the limitations below.
+**Base:** branch `main`, `HEAD` `5ea4878`, clean tree. All Sprint 13 changes are **uncommitted** in the working tree (by instruction); nothing was pushed.
+
+### The path that was audited (13.1)
+
+`/api/v1/analytics/generate` and `/ask` -> `SQLGenerationService` (`app/services/generation.py`) -> `provider.generate_sql` / `repair_sql` on a worker thread bounded by the request deadline -> `parse_llm_response` -> `AnalyticsQueryService.execute` (validate, read-only tenant-scoped transaction) -> result intelligence. The provider boundary was already small: one protocol (`app/llm/provider.py`), one factory function, two call sites in `generation.py`. Before this sprint three retry layers existed: the Google SDK (2 attempts on 5xx), the application repair loop, and the request deadline. The change surface was therefore bounded to `app/llm/`, settings, and wiring. Routes, the generation service, the validator and the executor were **not** changed.
+
+### What changed
+
+- **One factory, one provider class.** `app/llm/factory.py` selects the provider from `LLM_PROVIDER` and is the only place that constructs a client. `mock` returns the existing deterministic `MockLLMProvider`; `gemini` and `ollama` return `LangChainSQLProvider` (`app/llm/langchain_provider.py`) wrapping `ChatGoogleGenerativeAI` or `ChatOllama`. `gemini_provider.py` was removed.
+- **Application-owned behaviour is unchanged in kind:** the prompt (`SQLPromptBuilder`), the response contract (`parse_llm_response`), bounded repair, and request-deadline handling stay in the application. LangChain does model invocation only. SQLGlot validation and read-only execution do not import LangChain.
+- **Error classification** (`app/llm/errors.py`) walks the exception chain and maps to stable codes. New: `LLM_CREDENTIALS_INVALID` (previously an invalid key was a generic provider error). Provider text is never echoed.
+- **One retry policy.** LangChain's own retries are off (its Gemini default is 6); `1 + LLM_MAX_RETRIES` attempts, transient infrastructure failures only, bounded by half the request deadline.
+- **Settings renamed** to `LLM_PROVIDER` / `LLM_MODEL` (plus `OLLAMA_BASE_URL`, `LLM_MAX_RETRIES`). `LLM_MODE` and `GEMINI_MODEL` stop startup with a clear message instead of being ignored, and Compose forwards them so a stale `.env` is caught there too.
+- **No fallback** between providers, by design and by test.
+- **Default Gemini model** changed from `gemini-2.5-flash` to `gemini-3.6-flash` (see limitations).
+- Dependencies: `google-genai` (direct) replaced by `langchain-core`, `langchain-google-genai`, `langchain-ollama`; `pytest` pinned to a patched release; `pip-audit` reports no known vulnerabilities.
+
+Files: new `app/llm/{factory,langchain_provider,errors}.py`, `docs/llm-providers.md`, `tests/{test_llm_provider,test_llm_wire,test_llm_live}.py`; changed `app/core/{config,logging}.py`, `app/api/health.py`, `app/services/llm_dependencies.py`, `evals/{run_eval.py,thresholds.json}`, `pyproject.toml`, `docker-compose*.yml`, `.env.example`, CI and nightly workflows, the alert rule for configuration errors, and the docs; removed `app/llm/gemini_provider.py` and `tests/test_gemini_provider.py`.
+
+### Verification (real results on the final code)
+
+| Check | Result |
+|---|---|
+| `ruff check`, `ruff format --check`, `mypy` | Passed (64 source files) |
+| Backend unit tests (`pytest -m "not integration"`) | 433 passed, 2 skipped (the opt-in live tests) |
+| Same suite with all outbound network blocked | 433 passed, 2 skipped: no default test needs a network |
+| Coverage gate | analytics 94.7%, services 95.5%, llm 96.5% |
+| PostgreSQL integration tests (fresh database) | 43 passed, 0 skipped |
+| Migrations up, down, up; read-only privilege check | Passed |
+| Evaluation reference check; mock evaluation subset | 76 cases, 0 problems; 9-case subset, 5 scored, 5 correct, 0 of 4 adversarial leaks |
+| Validator fuzz (default size) | 17 passed |
+| `pip-audit` as CI runs it | No known vulnerabilities |
+| Frontend lint, 122 tests, build, `tsc`; backend contract test (12) | Passed |
+| Real Gemini client against a local server that always answers 503 | Server received exactly `1 + LLM_MAX_RETRIES` requests (1, 2, 3): no hidden retries |
+| Docker stack, `LLM_PROVIDER=mock` | Healthy; KPI and bar results through the frontend proxy |
+| Docker stack, `LLM_PROVIDER=ollama` with nothing running on the host | `LLM_PROVIDER_UNAVAILABLE` in about 1 s; `host.docker.internal` resolved inside the container; readiness stayed `ready`; no fallback |
+| Docker stack with the owner's old `.env` (`LLM_MODE`, `GEMINI_MODEL` set) | Backend refused to start: "LLM_MODE is no longer supported; set LLM_PROVIDER instead." |
+| Docker stack, bogus Gemini key | `LLM_CREDENTIALS_INVALID`, no key in the log |
+| Docker stack, real Gemini key | See limitations: one request succeeded end to end (5 rows, pie chart); others hit Google capacity or rate limits and returned the correct classified errors |
+
+Roadmap criteria and where they are proved: factory selection and invalid configuration (`test_llm_provider.py`); mock deterministic and offline (same file, and the network-blocked run); structured parsing and malformed output (same); provider errors, timeouts and retry exhaustion (`test_llm_provider.py`, `test_llm_wire.py`); `/generate` and `/ask` contracts (existing API and contract tests, unchanged); repair bounded and revalidated, security rejections never repaired, and dangerous SQL from any provider never executed (`test_llm_provider.py`, plus the existing security suite); tenant isolation and read-only permissions (the integration suite, unchanged).
+
+### Limitations and things not verified
+
+- **Ollama inference was not verified.** No Ollama is installed on this Windows machine. What is verified: the real `ChatOllama` client against a local fake server (reply parsed, malformed reply, model not pulled, server down), the unreachable-Ollama behaviour inside Docker, and the settings. Inference with a real model is for the owner to check on the Mac with `tests/test_llm_live.py` (see `docs/llm-providers.md`).
+- **Live Gemini coverage is partial.** On four models (`gemini-3.6-flash`, `gemini-3.8-flash`, `gemini-3.1-flash-lite`, `gemini-flash-lite-latest`) the provider returned structured JSON that the validator accepted. Through the full stack one request succeeded. Other requests failed because of Google: HTTP 503 "high demand" (also seen for `gemini-3.5-flash` and `gemini-flash-latest`), then HTTP 429 once the key's quota was used up by this testing. Those failures are the correct classified errors; they do not show the new code failing. The earlier slow `REQUEST_DEADLINE_EXCEEDED` requests are consistent with the same capacity problem.
+- **The old default model is retired.** `gemini-2.5-flash` now returns 404 "no longer available to new users" for this key. The default became `gemini-3.6-flash` because it worked here; model ids retire, so set `LLM_MODEL` explicitly.
+- **Gemini 3 ignores `temperature`.** Only the mock is deterministic; compare real models over repeated runs.
+- **The owner's `.env` must be updated** before the stack will start: rename `LLM_MODE` to `LLM_PROVIDER` and `GEMINI_MODEL` to `LLM_MODEL` (and pick an available model).
+- `langsmith` is installed transitively; no `LANGSMITH_*` variable may be set until sanitized tracing exists (warning in `docs/llm-providers.md`).
+- Not run: the k6 load test, Trivy scans, the CI workflows on a real runner (their YAML parses), and a live Ollama or LangSmith check.

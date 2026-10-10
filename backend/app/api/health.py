@@ -52,10 +52,12 @@ def _secret_present(secret) -> bool:
 
 
 def _provider_configured(settings: Settings) -> bool:
+    # Readiness never calls the provider: it only checks that the configuration is usable.
     return {
         "mock": True,
         "gemini": _secret_present(settings.gemini_api_key),
-    }.get(settings.llm_mode, False)
+        "ollama": bool(settings.effective_llm_model),
+    }.get(settings.llm_provider, False)
 
 
 @router.get("/health/ready")
@@ -148,7 +150,8 @@ def diagnostics(
                 "application_database": _timed(application_database),
                 "analytics_database": _timed(analytics_database),
                 "llm_provider": {
-                    "mode": settings.llm_mode,
+                    "provider": settings.llm_provider,
+                    "model": settings.effective_llm_model,
                     "configured": _provider_configured(settings),
                 },
             },

@@ -4,7 +4,7 @@ The AI SQL Analytics Copilot turns natural-language fleet questions into safe, e
 
 ## Architecture
 
-The system is a modular monolith: Next.js presentation layer -> FastAPI -> schema/business context -> Gemini or mock provider -> SQLGlot validation -> PostgreSQL read-only execution -> result intelligence. SQL generation, validation, metric definitions, summaries, and visualization selection remain backend-owned.
+The system is a modular monolith: Next.js presentation layer -> FastAPI -> schema/business context -> model provider (mock, Gemini or Ollama, through LangChain) -> SQLGlot validation -> PostgreSQL read-only execution -> result intelligence. SQL generation, validation, metric definitions, summaries, and visualization selection remain backend-owned.
 
 End-to-end, a request is authenticated (signed bearer token) and rate limited per principal; a question is length-validated and assigned a request ID; schema and business definitions are retrieved; the selected provider returns structured SQL; `/generate` returns that SQL without execution, while `/ask` sends it through AST validation, bounded repair when a classified error is repairable, and the read-only query service. Successful rows then receive KPI, visualization, warning, and grounded summary metadata for the frontend. No provider-generated SQL bypasses validation.
 
@@ -13,7 +13,7 @@ See [docs/architecture.md](docs/architecture.md), [docs/database-schema.md](docs
 ## Stack
 
 - Python 3.12+, FastAPI, Pydantic, SQLAlchemy, psycopg, SQLGlot, Alembic
-- PostgreSQL 16, Gemini SDK, deterministic mock provider
+- PostgreSQL 16, LangChain model integrations (Gemini, Ollama), deterministic mock provider
 - Next.js 16, React 19, TypeScript, Tailwind CSS, Recharts, Vitest
 - Docker Compose, pytest, Ruff, GitHub Actions
 
@@ -76,7 +76,7 @@ Errors use `{ "error": { "code": "...", "message": "...", "request_id": "..." } 
 
 The analytics DB uses a separate `analytics_readonly` role with a distinct password. It has no privileges on the application tables; it reads PII-free, tenant-scoped views in the `analytics` schema inside read-only transactions, and each query is limited to the authenticated principal's customer (`analytics_admin` sees all). Do not grant it writes or use application-owner credentials for analytics execution. See [docs/security.md](docs/security.md) for SQL controls and [docs/production-security-review.md](docs/production-security-review.md) for implemented controls versus recommended future controls. AST validation is defense in depth, not a complete security guarantee.
 
-Set `LLM_MODE=gemini`, `GEMINI_API_KEY`, and `GEMINI_MODEL` for Gemini. Mock mode requires no key and is disabled in production. Provider failures are bounded and classified; generated SQL is never executed after provider failure.
+Choose the model explicitly with `LLM_PROVIDER` (`mock`, `gemini` or `ollama`) and `LLM_MODEL`; Gemini also needs `GEMINI_API_KEY`. Mock mode requires no key, is deterministic, and is disabled in production. There is no fallback between providers: if the selected one is down the request fails with a classified error. Generated SQL is never executed after a provider failure, and SQL from every provider is validated the same way. See [docs/llm-providers.md](docs/llm-providers.md).
 
 Representative supported questions in deterministic mock mode include:
 
@@ -107,7 +107,7 @@ The PostgreSQL init script sets the `analytics_readonly` password only for new c
 
 `APP_ENV=production` disables debug/docs and rejects SQLite URLs and mock LLM mode. Configure exact `CORS_ALLOWED_ORIGINS` only when direct cross-origin browser access is required; the Next proxy is same-origin by default. Pool sizes, connection/query/provider timeouts, request limits, rate limits, repair attempts, and result caps are environment-configurable. Do not put real secrets in image build args, source control, or logs.
 
-Configuration lives in `.env.example` and the full setting-by-setting reference is in [docs/deployment.md](docs/deployment.md). Important values include `DATABASE_URL`, `ANALYTICS_DATABASE_URL`, distinct `POSTGRES_PASSWORD` and `ANALYTICS_DATABASE_PASSWORD`, `APP_ENV`, `LLM_MODE`, `GEMINI_API_KEY`, `CORS_ALLOWED_ORIGINS`, `MAX_REQUEST_BODY_BYTES`, `MAX_QUESTION_LENGTH`, `MAX_CONVERSATION_CONTEXT_CHARS`, `RATE_LIMIT_REQUESTS`, `RATE_LIMIT_WINDOW_SECONDS`, pool settings, `QUERY_TIMEOUT_SECONDS`, `MAX_RESULT_ROWS`, and `MAX_REPAIR_RETRIES`.
+Configuration lives in `.env.example` and the full setting-by-setting reference is in [docs/deployment.md](docs/deployment.md). Important values include `DATABASE_URL`, `ANALYTICS_DATABASE_URL`, distinct `POSTGRES_PASSWORD` and `ANALYTICS_DATABASE_PASSWORD`, `APP_ENV`, `LLM_PROVIDER`, `LLM_MODEL`, `GEMINI_API_KEY`, `CORS_ALLOWED_ORIGINS`, `MAX_REQUEST_BODY_BYTES`, `MAX_QUESTION_LENGTH`, `MAX_CONVERSATION_CONTEXT_CHARS`, `RATE_LIMIT_REQUESTS`, `RATE_LIMIT_WINDOW_SECONDS`, pool settings, `QUERY_TIMEOUT_SECONDS`, `MAX_RESULT_ROWS`, and `MAX_REPAIR_RETRIES`.
 
 `GET /health` is liveness; `GET /health/ready` is readiness and reports `degraded` (still HTTP 200) for optional dependencies such as the LLM key, so an orchestrator never restarts a healthy container over them. JSON logs carry request/conversation IDs and LLM, validation, SQL, repair, row-count, total-duration, and response-status metadata without logging questions, SQL, API keys, or full URLs. Every `/ask` and every rating also writes an audit event (principal, request id, SQL hash, tables, row count, duration, outcome; no question or SQL text).
 
@@ -130,7 +130,7 @@ make fuzz          # longer randomized validator run
 make verify-permissions   # database privilege model (needs the Compose database)
 pytest -m integration     # PostgreSQL: tenant isolation, durable conversations, query cost
 make eval-check    # every golden-question reference query runs on the seeded database
-make eval          # text-to-SQL evaluation (PROVIDER=mock|gemini, SUBSET=mock)
+make eval          # text-to-SQL evaluation (PROVIDER=mock|gemini|ollama, SUBSET=mock)
 ```
 
 End to end and load:
@@ -160,7 +160,7 @@ GitHub Actions (`.github/workflows/`) runs on every push: backend lint, format c
 - **Engineering challenges:** maintaining a strict SQL trust boundary across generation, repair, and execution; bounding conversation and request size; and making provider/database failures observable without leaking sensitive input.
 - **Technical decisions:** modular monolith rather than extra services; provider abstraction with deterministic mock mode; SQLGlot AST validation plus a separate PostgreSQL read-only role; backend-selected visualization metadata; and process-local metrics/rate limiting sized to the current Compose deployment.
 - **Security considerations:** model output is untrusted; all generated and repaired SQL is revalidated; database URLs/keys are runtime secrets; request bodies and expensive endpoints are bounded; and errors/logging use request IDs without returning stack traces or recording questions/SQL.
-- **Production-oriented work:** environment-specific settings, pooled connections and timeouts, health/readiness, structured telemetry, bounded Gemini retries, non-root containers, distinct DB credentials, and automated CI checks. These controls do not replace authentication, tenant isolation, shared multi-instance services, or a managed production ingress.
+- **Production-oriented work:** environment-specific settings, pooled connections and timeouts, health/readiness, structured telemetry, one bounded provider retry policy, non-root containers, distinct DB credentials, and automated CI checks. These controls do not replace authentication, tenant isolation, shared multi-instance services, or a managed production ingress.
 
 ## Limitations
 

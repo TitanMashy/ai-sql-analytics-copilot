@@ -358,7 +358,7 @@ def check_references(cases: list[dict[str, Any]], analytics: Any, principal: Any
 
 def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the text-to-SQL evaluation suite.")
-    parser.add_argument("--provider", choices=["mock", "gemini"], default="mock")
+    parser.add_argument("--provider", choices=["mock", "gemini", "ollama"], default="mock")
     parser.add_argument("--subset", choices=["all", "mock"], default="all")
     parser.add_argument("--cases", type=Path, default=DEFAULT_CASES)
     parser.add_argument("--thresholds", type=Path, default=DEFAULT_THRESHOLDS)
@@ -376,7 +376,7 @@ def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_arguments(argv)
     # The provider is chosen through configuration, so set it before any app module reads it.
-    os.environ["LLM_MODE"] = args.provider
+    os.environ["LLM_PROVIDER"] = args.provider
 
     from app.analytics.dependencies import get_analytics_query_service
     from app.conversation.service import ConversationMemory

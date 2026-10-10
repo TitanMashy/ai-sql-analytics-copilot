@@ -72,7 +72,7 @@ python -m evals.run_eval --check-references
 python -m evals.run_eval --provider mock --subset mock
 
 # 3. The full suite against a real model (nightly in CI).
-GEMINI_API_KEY=... python -m evals.run_eval --provider gemini \
+LLM_MODEL=<model> GEMINI_API_KEY=... python -m evals.run_eval --provider gemini \
     --report eval-report.json --markdown eval-summary.md --trend eval-trend.jsonl \
     --input-cost-per-million 0.30 --output-cost-per-million 2.50
 ```

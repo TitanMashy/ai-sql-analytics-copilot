@@ -38,7 +38,7 @@ def test_production_settings_mask_secrets_and_disable_debug() -> None:
     settings = Settings(
         environment="production",
         debug=True,
-        llm_mode="gemini",
+        llm_provider="gemini",
         gemini_api_key=SecretStr("never-log-this-key"),
         database_url="postgresql+psycopg://user:db-password@db/app",
         analytics_database_url="postgresql+psycopg://readonly:other-password@db/app",
@@ -64,12 +64,12 @@ def test_production_settings_mask_secrets_and_disable_debug() -> None:
 
 def test_production_rejects_sqlite_and_mock_provider() -> None:
     with pytest.raises(ValueError, match="Production requires PostgreSQL"):
-        Settings(environment="production", llm_mode="gemini")
+        Settings(environment="production", llm_provider="gemini")
 
     with pytest.raises(ValueError, match="mock provider is disabled"):
         Settings(
             environment="production",
-            llm_mode="mock",
+            llm_provider="mock",
             database_url="postgresql+psycopg://app@db/app",
             analytics_database_url="postgresql+psycopg://readonly@db/app",
         )
@@ -78,7 +78,7 @@ def test_production_rejects_sqlite_and_mock_provider() -> None:
 def _production_kwargs(**overrides):
     values = {
         "environment": "production",
-        "llm_mode": "gemini",
+        "llm_provider": "gemini",
         "gemini_api_key": SecretStr("key"),
         "database_url": "postgresql+psycopg://app@db/app",
         "analytics_database_url": "postgresql+psycopg://readonly@db/app",

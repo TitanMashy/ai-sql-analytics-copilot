@@ -60,7 +60,7 @@ cd backend && python -m evals.run_eval --provider mock --subset mock
 
 Optional stacks: `-f docker-compose.dev.yml` (backend on
 `127.0.0.1:8000`), `-f docker-compose.loadtest.yml` (see [capacity.md](capacity.md)). For a real
-model set `LLM_MODE=gemini` and `GEMINI_API_KEY` (or `GEMINI_API_KEY_FILE`).
+model set `LLM_PROVIDER=gemini` and `GEMINI_API_KEY` (or `GEMINI_API_KEY_FILE`); for a local model see [llm-providers.md](llm-providers.md).
 
 For a production-shaped deployment run the Compose stack on a host with `APP_ENV=production`, `AUTH_MODE=jwt`, `CONVERSATION_STORE=postgres`,
 `AUDIT_SINK=both`, and every secret as a `*_FILE`.

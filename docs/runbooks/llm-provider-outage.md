@@ -7,7 +7,8 @@
 
 - Users see "Too many requests", "The request took too long", or "I couldn't answer that".
 - `analytics_llm_errors_total` rises, split by `code` (for example `LLM_TIMEOUT`,
-  `LLM_RATE_LIMITED`, `LLM_PROVIDER_UNAVAILABLE`, `INVALID_LLM_RESPONSE`).
+  `LLM_RATE_LIMITED`, `LLM_PROVIDER_UNAVAILABLE`, `LLM_CREDENTIALS_INVALID`, `INVALID_LLM_RESPONSE`;
+  the full list is in [llm-providers.md](../llm-providers.md)).
 - `analytics_llm_call_duration_seconds` p95 climbs toward `LLM_TIMEOUT_SECONDS`.
 - `/health/ready` returns `{"status": "degraded", "degraded": ["llm_provider"]}` only when the key is
   missing. A provider that is merely failing still reports ready, because readiness does not make a
@@ -47,7 +48,7 @@ provider failure, so there is no data risk. Questions already answered are not a
 - **Provider slow, not down:** lower `LLM_TIMEOUT_SECONDS` so requests fail fast instead of tying up
   threads, and keep `REQUEST_DEADLINE_SECONDS` below the frontend timeout (30 s).
 - **Bad model or prompt rollout:** roll back to the previous release tag (see
-  [operations.md](../operations.md#rollback)) or set `GEMINI_MODEL` back to the previous model and
+  [operations.md](../operations.md#rollback)) or set `LLM_MODEL` back to the previous model and
   restart.
 - **Do not** raise `MAX_REPAIR_RETRIES` to compensate: it multiplies model load during an outage.
 

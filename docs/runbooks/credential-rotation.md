@@ -17,7 +17,7 @@ restart**; a rolling restart keeps the service available.
 
 ## Symptoms
 
-- `LLM_CONFIGURATION_ERROR` or `LLM_MODEL_UNAVAILABLE` errors: the provider key is missing, expired,
+- `LLM_CONFIGURATION_ERROR`, `LLM_CREDENTIALS_INVALID` or `LLM_MODEL_UNAVAILABLE` errors: the provider key is missing, expired,
   revoked, or the model name was retired. `/health/ready` shows `degraded: ["llm_provider"]` when
   the key is absent.
 - Startup fails with `Invalid configuration:` and a list of setting names (never values).

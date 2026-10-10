@@ -22,9 +22,17 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://app:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/app}
       ANALYTICS_DATABASE_URL: ${ANALYTICS_DATABASE_URL:-postgresql+psycopg://analytics_readonly:${ANALYTICS_DATABASE_PASSWORD:?Set ANALYTICS_DATABASE_PASSWORD in .env}@postgres:5432/app}
-      LLM_MODE: ${LLM_MODE:-mock}
+      LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+      LLM_MODEL: ${LLM_MODEL:-}
+      # Ollama runs on the host, not in Compose. From inside the container the host is
+      # host.docker.internal (Docker Desktop on Mac and Windows; mapped below for Linux).
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      LLM_MAX_RETRIES: ${LLM_MAX_RETRIES:-1}
+      # Removed names, forwarded only so the app can refuse to start with a clear message
+      # instead of silently running a different provider than the one in an old .env.
+      LLM_MODE: ${LLM_MODE:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
       APP_ENV: ${APP_ENV:-development}
       DEBUG: ${DEBUG:-false}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-[]}
@@ -72,6 +80,8 @@ services:
     # Use docker-compose.dev.yml to publish it for local debugging.
     expose:
       - "8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     init: true
     restart: unless-stopped
     read_only: true

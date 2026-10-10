@@ -14,10 +14,11 @@ Copy `.env.example` to `.env` for local Compose use. `.env` is ignored by Git. R
 | `ANALYTICS_DATABASE_URL` | Restricted query connection | Use the separate `analytics_readonly` role. |
 | `POSTGRES_PASSWORD` | Fresh Compose database bootstrap | Use a unique secret; replace the `.env.example` placeholder. |
 | `ANALYTICS_DATABASE_PASSWORD` | Fresh `analytics_readonly` role bootstrap | Use a different secret from `POSTGRES_PASSWORD`. |
-| `LLM_MODE` | `mock` or `gemini` | `mock` needs no provider key. |
+| `LLM_PROVIDER` | `mock`, `gemini` or `ollama` | `mock` needs no provider key; no fallback between providers. `LLM_MODE` is no longer accepted. |
 | `GEMINI_API_KEY` | Gemini credential | Supply through the runtime environment or a secret manager; never bake it into an image. |
-| `GEMINI_MODEL` | Gemini model ID | Select a model available to the configured account. |
-| `LLM_TIMEOUT_SECONDS` | Provider request timeout | SDK retries are bounded to transient 5xx responses. |
+| `LLM_MODEL` | Model ID | Gemini default `gemini-3.6-flash`; required for Ollama. Providers retire model ids, so set it explicitly. `GEMINI_MODEL` is no longer accepted. |
+| `OLLAMA_BASE_URL`, `LLM_MAX_RETRIES` | Ollama address; extra attempts after a transient failure | `http://localhost:11434` (Compose: `host.docker.internal`); `1`. |
+| `LLM_TIMEOUT_SECONDS` | Provider request timeout | Retries are applied once, in the application, only for transient provider failures. See [llm-providers.md](llm-providers.md). |
 | `CORS_ALLOWED_ORIGINS` | JSON array of browser origins | Empty by default. The same-origin Next.js proxy normally makes CORS unnecessary. |
 | `MAX_QUESTION_LENGTH` | Natural-language question characters | Defaults to 2,000. |
 | `MAX_CONVERSATION_CONTEXT_CHARS` | Caller-supplied context/turn characters | Defaults to 2,000. |
@@ -47,7 +48,7 @@ Copy `.env.example` to `.env` for local Compose use. `.env` is ignored by Git. R
 
 The Compose URLs use distinct owner and read-only credentials on a fresh local database. Percent-encode reserved URL characters if using a password in a SQLAlchemy URL. For an existing initialized database, changing either password does not change PostgreSQL roles: rotate the `app` and `analytics_readonly` role passwords explicitly and update both URLs before enabling password authentication.
 
-Production configuration rejects SQLite URLs and the deterministic mock provider. Use PostgreSQL and a configured Gemini provider; mock mode remains available in development and test environments.
+Production configuration rejects SQLite URLs and the deterministic mock provider. Use PostgreSQL and a configured real provider (Gemini or Ollama); mock mode remains available in development and test environments.
 
 ## Docker Compose
 
@@ -70,7 +71,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 
 Stop the stack with `docker compose down`; this does not request volume deletion. The default `AUTH_MODE=disabled` is for local use only. To exercise authentication locally, set `AUTH_MODE=jwt`, `JWT_ALGORITHM=HS256`, `JWT_SECRET`, `JWT_ISSUER`, and `JWT_AUDIENCE`, then paste the output of `python backend/scripts/issue_token.py --customer-id 7` (or `--admin`) into the dashboard's sign-in prompt.
 
-For Gemini, set `LLM_MODE=gemini` and `GEMINI_API_KEY` in the runtime environment before starting the backend. CI and credential-free demos use the deterministic mock provider.
+For Gemini, set `LLM_PROVIDER=gemini` and `GEMINI_API_KEY` in the runtime environment before starting the backend. CI and credential-free demos use the deterministic mock provider.
 
 The backend container runs as a non-root user, installs runtime dependencies only, has a read-only root filesystem with a temporary `/tmp`, drops Linux capabilities, and has a readiness health check. The frontend uses the standalone Next.js output and a non-root runtime. PostgreSQL initialization creates the read-only role with a distinct password (`ANALYTICS_DATABASE_PASSWORD`) for new clusters and grants it no table privileges; the `b7c2d41f8a10` migration creates the `analytics` views and grants the role `SELECT` on those only.
 
