@@ -40,6 +40,7 @@ state and handoff.
 | Document | Role |
 |---|---|
 | [Sequence.md](Sequence.md) | How the project evolved, the complexity analysis, and the log of what was simplified and why |
+| [../final_sprints.md](../final_sprints.md) | The plan for Sprints 13-15 (LangChain, Ollama, tracing, closeout). Completed; results in progress.md sections 23-25 |
 | [../sprints.md](../sprints.md) | The original Sprint 11 and 12 plan. Historical: some items it describes were later removed (see Sequence.md section 18) |
 | [../progress.md](../progress.md) | The current handoff: status, verification results, known limitations |
 

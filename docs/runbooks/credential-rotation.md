@@ -11,7 +11,8 @@ restart**; a rolling restart keeps the service available.
 |---|---|---|---|
 | Application database password (`app` role) | `DATABASE_URL`, `POSTGRES_PASSWORD` | backend, migrations, conversations, audit | restart backends |
 | Analytics read-only password | `ANALYTICS_DATABASE_URL`, `ANALYTICS_DATABASE_PASSWORD` | backend analytics engine | restart backends |
-| LLM API key | `GEMINI_API_KEY` | backend | restart backends |
+| LLM API key (Gemini only; Ollama and mock need none) | `GEMINI_API_KEY` | backend | restart backends |
+| LangSmith API key (only if tracing is on) | `LANGSMITH_API_KEY` | backend trace export | traces stop; requests are unaffected |
 | JWT signing key / public key | `JWT_SECRET` or `JWT_PUBLIC_KEY` | backend verifies tokens | existing tokens stop working |
 | Metrics / operator token | `METRICS_TOKEN` | Prometheus scrape, diagnostics | update the scraper |
 

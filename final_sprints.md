@@ -1,5 +1,7 @@
 # AI SQL Analytics Copilot — Final Implementation Sprints
 
+> **Status: completed.** Sprints 13, 14 and 15 were executed in order against this contract. The evidence, the live checks that were not run, and the final state are in [progress.md](progress.md) sections 23 to 25. This file is kept as the record of the plan.
+
 **Purpose:** This is the execution contract for the final three coding-agent sprints. The agent must read this document, the current `progress.md`, `README.md`, any existing `sprints.md`, relevant architecture/security/deployment/evaluation docs, and the repository before making changes. **The repository and executable evidence are the source of truth; handoff documents can be stale.**
 
 **Final sequence:** Sprint 13 → Sprint 14 → Sprint 15 (project closeout). These are the final planned sprints; Sprint 15 must close the project rather than propose another roadmap.
