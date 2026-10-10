@@ -84,6 +84,25 @@ Every repaired query returns through the exact same AST validator and analytics 
 
 These controls harden a single-instance deployment. Rate limiting, metrics, and conversations are still per process; shared multi-instance state is out of scope here.
 
+## Model Providers and Tracing
+
+- The model is untrusted whichever provider is selected (`mock`, `gemini`, `ollama`). Initial and
+  repaired SQL take the same path: SQLGlot validation, the analytics views and the read-only,
+  tenant-scoped transaction. LangChain is used only to call the model; it makes no decision about
+  what may run, and no tenant or permission rule lives in a prompt, callback or model wrapper.
+- **No automatic fallback.** A failing provider produces a classified error (see
+  [llm-providers.md](llm-providers.md)); it is never replaced by another provider, so data is not
+  sent anywhere the operator did not choose. Removed or unknown provider settings stop startup.
+- Result rows are never sent to a model. Only the question, conversation context and the PII-free
+  schema are, and with `ollama` none of it leaves the machine.
+- **Optional LangSmith tracing** is off by default and sends only allowlisted metadata (request id,
+  provider, model, outcome and error codes, attempt/repair/row/table counts, evaluation case id,
+  durations) with empty inputs. Questions, prompts, SQL, rows, summaries, conversation history,
+  user/tenant/customer identifiers, tokens, keys and exception messages are not sent. A failure is a
+  code, because database error text can contain SQL. Tracing cannot block or fail a request: it uses
+  a bounded queue, short timeouts and a circuit breaker. The API key is a secret setting
+  (`LANGSMITH_API_KEY`, or `_FILE`).
+
 ## Remaining Limitations
 
 SQLGlot AST validation is substantially stronger than regex checks, but no application validator should be treated as the sole security boundary; the database views, read-only transaction, and tenant scope are the independent controls behind it. The tenant scope settings are ordinary session settings, so the validator's `set_config`/`current_setting`/`SET` restrictions are part of that boundary. Not yet implemented: query cost estimation (`EXPLAIN` budgets), shared rate limiting and durable conversations across instances, and an identity provider (the app validates tokens but does not issue them; `backend/scripts/issue_token.py` is a development helper).

@@ -102,6 +102,12 @@ class MetricsRegistry:
             ["provider", "code"],
             registry=self.registry,
         )
+        self._llm_retries = Counter(
+            "analytics_llm_retries",
+            "Extra attempts made after a transient LLM provider failure, by provider",
+            ["provider"],
+            registry=self.registry,
+        )
         self._validation_by_reason = Counter(
             "analytics_validation_rejections",
             "SQL rejected by the validator, by error code",
@@ -174,6 +180,9 @@ class MetricsRegistry:
         self._llm_duration.labels(provider).observe(max(0.0, seconds))
         if error_code:
             self._llm_errors.labels(provider, error_code).inc()
+
+    def record_llm_retry(self, provider: str) -> None:
+        self._llm_retries.labels(provider).inc()
 
     def record_validation_failure(self, reason: str) -> None:
         self.increment("validation_failures_total")

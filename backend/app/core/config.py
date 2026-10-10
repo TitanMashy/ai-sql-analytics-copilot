@@ -37,10 +37,20 @@ class Settings(BaseSettings):
     )
     llm_model: str | None = Field(default=None, validation_alias="LLM_MODEL")
     ollama_base_url: str = Field(
-        default="http://localhost:11434", validation_alias="OLLAMA_BASE_URL"
+        default="http://127.0.0.1:11434", validation_alias="OLLAMA_BASE_URL"
     )
     # Extra attempts after a transient provider failure (the only retry in the model path).
     llm_max_retries: int = Field(default=1, ge=0, le=3, validation_alias="LLM_MAX_RETRIES")
+    # Optional LangSmith tracing of the model pipeline. Off by default; see app/core/llm_tracing.py.
+    # Only allowlisted metadata is ever sent: never questions, SQL, rows, tenants, or keys.
+    langsmith_tracing: bool = Field(default=False, validation_alias="LANGSMITH_TRACING")
+    langsmith_api_key: SecretStr | None = Field(
+        default=None, validation_alias="LANGSMITH_API_KEY", repr=False
+    )
+    langsmith_project: str = Field(
+        default="analytics-copilot", validation_alias="LANGSMITH_PROJECT"
+    )
+    langsmith_endpoint: str | None = Field(default=None, validation_alias="LANGSMITH_ENDPOINT")
     # Names replaced by LLM_PROVIDER and LLM_MODEL. They are read only to refuse to start: an
     # ignored LLM_MODE would silently leave the app on the mock provider.
     legacy_llm_mode: str | None = Field(
@@ -183,6 +193,16 @@ class Settings(BaseSettings):
             raise ValueError("OLLAMA_BASE_URL must start with http:// or https://.")
         return value
 
+    @field_validator("langsmith_endpoint")
+    @classmethod
+    def validate_langsmith_endpoint(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        value = value.strip().rstrip("/")
+        if not value.startswith(("http://", "https://")):
+            raise ValueError("LANGSMITH_ENDPOINT must start with http:// or https://.")
+        return value
+
     @field_validator("log_level")
     @classmethod
     def validate_log_level(cls, value: str) -> str:
@@ -281,6 +301,7 @@ FILE_SECRETS: dict[str, str] = {
     "JWT_SECRET": "jwt_secret",
     "JWT_PUBLIC_KEY": "jwt_public_key",
     "METRICS_TOKEN": "metrics_token",
+    "LANGSMITH_API_KEY": "langsmith_api_key",
 }
 
 

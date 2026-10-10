@@ -13,6 +13,7 @@ from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from app.analytics.serialization import normalize_rows
 from app.analytics.validator import SQLValidator, ValidationResult
 from app.core.auth import Principal
+from app.core.llm_tracing import stage
 from app.core.metrics import metrics
 from app.core.telemetry import get_request_telemetry
 from app.db.analytics_surface import SCOPE_DENY, SCOPE_GLOBAL, SCOPE_TENANT
@@ -124,7 +125,12 @@ class AnalyticsQueryService:
     def validate(self, sql: str, request_id: str | None = None) -> ValidationResult:
         started_at = perf_counter()
         telemetry = get_request_telemetry()
-        result = self.validator.validate(sql)
+        with stage("sql_validation") as run:
+            result = self.validator.validate(sql)
+            run.set(
+                validation_status="valid" if result.valid else "invalid",
+                error_code=None if result.valid else result.error_code,
+            )
         elapsed_ms = (perf_counter() - started_at) * 1000
         metrics.observe("sql_validation_latency_ms", elapsed_ms)
         if telemetry:
@@ -232,22 +238,24 @@ class AnalyticsQueryService:
 
         Fetches one row past ``max_result_rows`` so the caller can tell the result was truncated.
         """
-        try:
-            with self.engine.connect() as connection:
-                is_postgresql = connection.dialect.name == "postgresql"
-                if is_postgresql:
-                    self._prepare_postgresql_transaction(
-                        connection, timeout_seconds, scope, customer_id
-                    )
-                statement = self._driver_sql(sql, connection)
-                if is_postgresql:
-                    self._check_query_cost(connection, statement)
-                result = connection.exec_driver_sql(statement)
-                rows = result.fetchmany(self.max_result_rows + 1)
-                columns = list(result.keys())
-        except SQLAlchemyError as error:
-            translated = self._translate_error(error, started_at, request_id)
-            raise translated from error
+        with stage("sql_execution") as run:
+            try:
+                with self.engine.connect() as connection:
+                    is_postgresql = connection.dialect.name == "postgresql"
+                    if is_postgresql:
+                        self._prepare_postgresql_transaction(
+                            connection, timeout_seconds, scope, customer_id
+                        )
+                    statement = self._driver_sql(sql, connection)
+                    if is_postgresql:
+                        self._check_query_cost(connection, statement)
+                    result = connection.exec_driver_sql(statement)
+                    rows = result.fetchmany(self.max_result_rows + 1)
+                    columns = list(result.keys())
+            except SQLAlchemyError as error:
+                translated = self._translate_error(error, started_at, request_id)
+                raise translated from error
+            run.set(row_count=len(rows))
         return rows, columns
 
     def _check_query_cost(self, connection: Connection, statement: str) -> None:

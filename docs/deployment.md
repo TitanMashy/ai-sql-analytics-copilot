@@ -17,7 +17,8 @@ Copy `.env.example` to `.env` for local Compose use. `.env` is ignored by Git. R
 | `LLM_PROVIDER` | `mock`, `gemini` or `ollama` | `mock` needs no provider key; no fallback between providers. `LLM_MODE` is no longer accepted. |
 | `GEMINI_API_KEY` | Gemini credential | Supply through the runtime environment or a secret manager; never bake it into an image. |
 | `LLM_MODEL` | Model ID | Gemini default `gemini-3.6-flash`; required for Ollama. Providers retire model ids, so set it explicitly. `GEMINI_MODEL` is no longer accepted. |
-| `OLLAMA_BASE_URL`, `LLM_MAX_RETRIES` | Ollama address; extra attempts after a transient failure | `http://localhost:11434` (Compose: `host.docker.internal`); `1`. |
+| `LANGSMITH_TRACING`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT`, `LANGSMITH_ENDPOINT` | Optional LangSmith tracing of the model pipeline; sends only allowlisted metadata, never questions, SQL or rows. See [llm-providers.md](llm-providers.md) | `false`, unset, `analytics-copilot`, LangSmith's default. The key is a secret (`_FILE` works). |
+| `OLLAMA_BASE_URL`, `LLM_MAX_RETRIES` | Ollama address; extra attempts after a transient failure | `http://127.0.0.1:11434` (Compose: `host.docker.internal`); `1`. |
 | `LLM_TIMEOUT_SECONDS` | Provider request timeout | Retries are applied once, in the application, only for transient provider failures. See [llm-providers.md](llm-providers.md). |
 | `CORS_ALLOWED_ORIGINS` | JSON array of browser origins | Empty by default. The same-origin Next.js proxy normally makes CORS unnecessary. |
 | `MAX_QUESTION_LENGTH` | Natural-language question characters | Defaults to 2,000. |
@@ -117,6 +118,6 @@ Rate limiting, metrics, and conversations are process-local. Multi-instance depl
 | `CONVERSATION_TTL_DAYS`, `CONVERSATION_MAX_PER_OWNER`, `CONVERSATION_MAX_TURNS` | retention and caps | 30, 200, 8 |
 | `QUERY_COST_LIMIT` | reject plans above this PostgreSQL cost; empty disables | 1,000,000 |
 | `AUDIT_SINK`, `AUDIT_RETENTION_DAYS` | `log`, `database`, or `both` | `log`; Compose `both`; 365 |
-| `<SECRET>_FILE` | read `DATABASE_URL`, `ANALYTICS_DATABASE_URL`, `GEMINI_API_KEY`, `JWT_SECRET`, `JWT_PUBLIC_KEY`, or `METRICS_TOKEN` from a file | setting both is a startup error |
+| `<SECRET>_FILE` | read `DATABASE_URL`, `ANALYTICS_DATABASE_URL`, `GEMINI_API_KEY`, `LANGSMITH_API_KEY`, `JWT_SECRET`, `JWT_PUBLIC_KEY`, or `METRICS_TOKEN` from a file | setting both is a startup error |
 
 Compose adds a one-shot `migrate` service (the backend waits for it), plus `seed` (profile `demo`) and `purge` (profile `ops`). Readiness (`/health/ready`) returns 503 only for required dependencies and 200 with `{"status": "degraded"}` for optional ones. Operating, releasing, rolling back, and incident response: [operations.md](operations.md).

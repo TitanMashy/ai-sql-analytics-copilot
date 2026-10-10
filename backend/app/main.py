@@ -17,6 +17,7 @@ from app.api.health import router as health_router
 from app.api.schema import router as schema_router
 from app.conversation.service import ConversationAccessError, get_conversation_memory
 from app.core.config import ConfigurationError, get_settings
+from app.core.llm_tracing import configure_llm_tracing
 from app.core.logging import configure_logging
 from app.core.metrics import CONTENT_TYPE_PROMETHEUS, metrics
 from app.core.middleware import (
@@ -38,6 +39,7 @@ except ConfigurationError as configuration_error:
     # Fail at startup with every problem named (and no values), not with a stack trace.
     raise SystemExit(str(configuration_error)) from None
 configure_logging(settings.effective_log_level)
+configure_llm_tracing(settings)
 
 logger = logging.getLogger(__name__)
 metrics.set_build_info(settings.app_version)

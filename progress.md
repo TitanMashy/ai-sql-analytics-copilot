@@ -16,7 +16,7 @@ The technically interesting parts are the modular LLM provider boundary, determi
 Current status: Sprints 1–12 implemented. The backend, frontend and Docker Compose stack were run and
 verified in the stabilization pass (section 22), with the exceptions listed there under "Not run".
 Sprint 13 (LangChain model boundary and explicit provider switching) is complete and recorded in section 23.
-Sprints 14 and 15 are planned in `final_sprints.md`.
+Sprint 14 (Ollama, optional sanitized LangSmith tracing, honest cross-provider evaluation) is complete except for the live checks listed in section 24. Sprint 15 (closeout) is planned in `final_sprints.md`.
 ```
 
 | Sprint | Status | Description |
@@ -364,7 +364,7 @@ Values below are documented formats only. Real values belong in ignored `.env`, 
 | `GEMINI_API_KEY` | Only when `LLM_PROVIDER=gemini` | Google Gemini credential; never print or commit it. |
 | `LLM_PROVIDER` | No; default `mock` | `mock`, `gemini` or `ollama`; mock is disabled in production. Replaces `LLM_MODE`, which now stops startup. |
 | `LLM_MODEL` | Gemini: no (default `gemini-3.6-flash`); Ollama: yes | Model id. Replaces `GEMINI_MODEL`, which now stops startup. |
-| `OLLAMA_BASE_URL` | No | Default `http://localhost:11434` (`host.docker.internal` in Compose). |
+| `OLLAMA_BASE_URL` | No | Default `http://127.0.0.1:11434` (`host.docker.internal` in Compose). |
 | `LLM_MAX_RETRIES` | No; default `1` | Extra attempts after a transient provider failure. |
 | `LOG_LEVEL` | No; default `INFO` | Structured application log threshold. |
 | `LLM_TIMEOUT_SECONDS` | No; default `30` | Provider timeout; transient Gemini 5xx retries are bounded. |
@@ -749,5 +749,58 @@ Roadmap criteria and where they are proved: factory selection and invalid config
 - **The old default model is retired.** `gemini-2.5-flash` now returns 404 "no longer available to new users" for this key. The default became `gemini-3.6-flash` because it worked here; model ids retire, so set `LLM_MODEL` explicitly.
 - **Gemini 3 ignores `temperature`.** Only the mock is deterministic; compare real models over repeated runs.
 - **The owner's `.env` must be updated** before the stack will start: rename `LLM_MODE` to `LLM_PROVIDER` and `GEMINI_MODEL` to `LLM_MODEL` (and pick an available model).
-- `langsmith` is installed transitively; no `LANGSMITH_*` variable may be set until sanitized tracing exists (warning in `docs/llm-providers.md`).
+- `langsmith` is installed transitively and would auto-trace the model call if `LANGSMITH_TRACING` were set. Sprint 14 (section 24) added sanitized, opt-in tracing and switches LangChain's own tracing off around every model call.
 - Not run: the k6 load test, Trivy scans, the CI workflows on a real runner (their YAML parses), and a live Ollama or LangSmith check.
+
+
+## 24. Sprint 14: Ollama, optional LangSmith tracing, cross-provider evaluation
+
+**Status:** complete against the Sprint 14 checklist for everything that can be verified on this machine. Two things cannot be and are recorded as not run: inference with a real Ollama model, and a live Gemini evaluation (see limitations).
+**Base:** branch `main`, `HEAD` `19213a2` (Sprint 13, committed by the owner). All Sprint 14 changes are **uncommitted** in the working tree, by instruction; nothing was pushed.
+
+### 14.1 Ollama
+
+The factory branch already existed from Sprint 13. Added: `scripts/llm_smoke.py` (provider builds, model answers and the reply parses, SQL validates, and with PostgreSQL configured it executes read-only; exit 0 only if every step that ran passed); a macOS setup guide with a pulled-by-hand starter model (`qwen2.5-coder:7b`, 4.7 GB per the Ollama library; `llama3.1:8b` 4.9 GB and `qwen2.5-coder:14b` 9.0 GB as alternatives; labelled a suggestion, not a measured recommendation); Docker-to-host networking and troubleshooting in `docs/llm-providers.md`. The default address changed from `localhost` to `127.0.0.1`: `localhost` resolves to both `127.0.0.1` and `::1`, which cost an extra connection attempt against a loopback-only server (0.32 s versus 0.10 s with curl). Ollama is not a Compose dependency, nothing downloads a model, and a stopped Ollama fails in about a second with `LLM_PROVIDER_UNAVAILABLE`.
+
+Verified here: the real `ChatOllama` client against a local stand-in (reply parsed, malformed reply, model not pulled, server down: `tests/test_llm_wire.py`); the smoke script against the stand-in; and, in an isolated Compose stack, a container reaching a **loopback-bound** stand-in on the host through `host.docker.internal` and answering a question end to end (KPI 766, readiness `ready`, the stand-in logged the requests). Not verified: **inference with a real model**, which is for the owner to run on the Mac (commands in `docs/llm-providers.md`).
+
+### 14.2 LangSmith tracing (optional, off by default)
+
+`app/core/llm_tracing.py`. Findings that shaped it, all measured: with `LANGSMITH_TRACING=true` LangChain auto-traces the model call and the run would carry the prompt; and against an unreachable endpoint LangSmith's default client let the process exit only after 45 s (8 s even with tight timeouts), while its synchronous mode blocks the request. So tracing builds its own sanitized runs and hands them to a bounded in-process queue (non-blocking put); a daemon worker exports with short timeouts, no retries and a circuit breaker; shutdown waits about a second. Runs have empty inputs and carry only an allowlist of short tokens and numbers (request id, operation, provider, model, outcome, error code, attempt and repair counts, row and table counts, case id, duration). Errors are recorded as codes, never messages. LangChain's automatic tracing is suspended around every model call. Stages: operation, context retrieval, prompt construction, model invocation (per attempt), response parsing, SQL validation, repair, execution.
+
+Evidence: 31 tests in `tests/test_llm_tracing.py`, including a request made with deliberately sensitive content and a check that none of it appears in anything exported; the real LangSmith client against a LangSmith-shaped local server, reading the actual bytes sent; a control showing an unprotected client *does* send the question and ours does not; a failing client, a slow client (5 requests in under 2 s while exports blocked), a circuit breaker, and a subprocess exit-time test against a dead endpoint. In Docker: with tracing on and a stand-in LangSmith, 7 runs were received, every `inputs` was `{}`, and the sensitive question, SQL, table names, row value and key were all absent from every byte; with the stand-in killed, three requests still answered in 0.03 to 0.12 s and the container stopped in 0.8 s; with the flag off but a key and endpoint set, zero requests were sent. No live LangSmith check was run.
+
+### 14.3 Evaluation
+
+Dataset facts (counted from the file): 76 cases = 58 accuracy + 6 structure + 12 adversarial; a full run scores 64 and reports 12 adversarial separately; the mock subset is 9 cases = 5 scored + 4 adversarial. Two defects found in the harness and fixed: (1) an adversarial case counted as "rejected, passed" whenever the request raised *any* error, so a provider outage would have looked like a safety success; such cases are now **inconclusive** (the safety layers never saw them), and only a rejection by the validator or executor counts; (2) the mock refuses all four of its adversarial cases itself, so the earlier "4 rejected, 0 leaks" said nothing about the validator. The report now states: dataset size, cases run, not run, scored; valid-SQL rate versus correctness (and correctness among answers produced); provider errors, parse failures, deadlines, safety rejections, execution errors, declines; repairs; mean/p50/p95 latency; provider and model; the settings that shape answers; the machine; and, for Ollama, its version and loaded-model memory. A run where every request fails in the model path is `status: blocked` with exit code 3; configuration errors exit 2 with a message instead of a traceback. `--model` sets the model for a run. Thresholds were not invented: the Ollama section is unset like Gemini's, to be set from a baseline.
+
+Reports actually produced here: **mock** (deterministic subset): 9 of 76 cases run (67 not run), 5 of 5 scored correct, 0 of 4 adversarial leaks, 4 adversarial inconclusive (declined by the mock), p95 64 ms, on Windows 10, 8 CPUs, 31.7 GB, PostgreSQL 16. **Ollama with nothing running:** `status: blocked`, exit 3 (this verified the blocked path; it is not a result). **Gemini:** not run; the owner's `.env` key is empty and the earlier key had exhausted its quota. The baseline table in `docs/evaluation.md` records all three honestly.
+
+### 14.4 Reliability
+
+Added `analytics_llm_retries_total{provider}`. Existing metrics already cover provider, duration, outcome (`analytics_llm_errors_total{code}`) and repair counts; logs carry `llm_provider`, `llm_model`, `error_code` and `attempt` and no content. One retry policy and no fallback are unchanged from Sprint 13.
+
+### Verification (final code)
+
+| Check | Result |
+|---|---|
+| `ruff check`, `ruff format --check`, `mypy` | Passed (65 source files) |
+| Backend unit tests | 470 passed, 2 skipped (opt-in live tests) |
+| Same suite with outbound network blocked | 470 passed, 2 skipped |
+| Coverage gate | analytics 94.7%, services 95.8%, llm 96.6% |
+| PostgreSQL integration tests, migration round trip, privilege check | 43 passed; down 2 / up 2; verified |
+| Evaluation reference check; mock subset exit code | 76 cases, 0 problems; exit 0 |
+| Validator fuzz at the nightly size (20,000) | 17 passed |
+| `pip-audit` as CI runs it | No known vulnerabilities |
+| Frontend lint, 122 tests, build, `tsc` | Passed |
+| Docker, `LLM_PROVIDER=mock` (final code) | Healthy; KPI 766 and a bar chart; readiness `ready`; tracing flag `false` |
+
+### Limitations
+
+- **No inference with a real Ollama model was run** (no Ollama on this machine). The Mac verification is the remaining Ollama step.
+- **No live Gemini evaluation** (no key available), and **no live LangSmith check**. Both are reported as not run, not as passed.
+- The Gemini and Ollama evaluation baselines and thresholds do not exist yet; the first live runs create them.
+- Tracing sends request ids and timings to a third party when enabled; the data flow is documented in `docs/llm-providers.md`, `docs/security.md` and `docs/threat-model.md`.
+- Gemini 3 ignores `temperature`; real-model results are not deterministic.
+
+**Exit gate:** configuration switches among mock, Gemini and Ollama (mock and Ollama exercised in Docker here, Gemini in Sprint 13); tracing cannot break a core request (shown with a dead, slow and failing endpoint); and honest evaluation reports exist, with the live ones recorded as blocked or not run.

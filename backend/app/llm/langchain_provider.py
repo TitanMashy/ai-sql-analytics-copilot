@@ -22,6 +22,8 @@ from typing import Any, Protocol
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from app.core.llm_tracing import stage, suspend_langchain_tracing
+from app.core.metrics import metrics
 from app.llm.errors import classify_provider_error
 from app.llm.parser import parse_llm_response
 from app.llm.prompt import SQLPromptBuilder
@@ -85,9 +87,10 @@ class LangChainSQLProvider:
         schema_context: SchemaContext,
         conversation_context: str | None = None,
     ) -> LLMGeneration:
-        prompt = self.prompt_builder.build_user_prompt(
-            question, schema_context, conversation_context
-        )
+        with stage("prompt_construction"):
+            prompt = self.prompt_builder.build_user_prompt(
+                question, schema_context, conversation_context
+            )
         return self._complete(prompt)
 
     def repair_sql(
@@ -98,9 +101,10 @@ class LangChainSQLProvider:
         schema_context: SchemaContext,
         conversation_context: str | None = None,
     ) -> LLMGeneration:
-        prompt = self.prompt_builder.build_repair_prompt(
-            question, schema_context, original_sql, error_message, conversation_context
-        )
+        with stage("prompt_construction"):
+            prompt = self.prompt_builder.build_repair_prompt(
+                question, schema_context, original_sql, error_message, conversation_context
+            )
         return self._complete(prompt)
 
     def _complete(self, prompt: str) -> LLMGeneration:
@@ -109,39 +113,57 @@ class LangChainSQLProvider:
             HumanMessage(content=prompt),
         ]
         response = self._invoke_with_retry(messages)
-        text = _response_text(response)
-        if not text:
-            raise LLMProviderError(
-                "INVALID_LLM_RESPONSE", f"{self.label} returned an empty response.", 502
-            )
-        # Malformed output is a classified failure, never something to guess into SQL.
-        return parse_llm_response(text)
+        with stage("response_parsing"):
+            text = _response_text(response)
+            if not text:
+                raise LLMProviderError(
+                    "INVALID_LLM_RESPONSE", f"{self.label} returned an empty response.", 502
+                )
+            # Malformed output is a classified failure, never something to guess into SQL.
+            return parse_llm_response(text)
 
     def _invoke_with_retry(self, messages: list[Any]) -> Any:
         attempts = 1 + self.max_retries
         started_at = self._clock()
         for attempt in range(1, attempts + 1):
-            try:
-                return self.chat_model.invoke(messages)
-            except Exception as error:
-                classified = classify_provider_error(error, self.label)
-                # Metadata only: no prompt, SQL, question, key, or provider message text.
-                logger.warning(
-                    "LLM provider call failed",
-                    extra={
-                        "llm_provider": self.name,
-                        "llm_model": self.model,
-                        "error_code": classified.code,
-                        "error_type": type(error).__name__,
-                        "attempt": attempt,
-                    },
-                )
-                in_window = self._clock() - started_at < self.retry_window_seconds
-                if classified.retryable and attempt < attempts and in_window:
-                    self._sleep(min(0.2 * 2 ** (attempt - 1), 2.0) + random.uniform(0, 0.1))
-                    continue
-                message = classified.message
-                if classified.retryable and attempts > 1:
-                    message = f"{message} It did not recover after {attempt} attempts."
-                raise LLMProviderError(classified.code, message, classified.status_code) from error
+            retry = False
+            with stage(
+                "model_invocation",
+                provider=self.name,
+                model=self.model,
+                attempt=attempt,
+                max_attempts=attempts,
+            ) as run:
+                try:
+                    # LangChain's automatic tracing would record the whole prompt and reply, so it
+                    # is off for this call; the sanitized span above is the only record.
+                    with suspend_langchain_tracing():
+                        return self.chat_model.invoke(messages)
+                except Exception as error:
+                    classified = classify_provider_error(error, self.label)
+                    run.fail(classified.code)
+                    # Metadata only: no prompt, SQL, question, key, or provider message text.
+                    logger.warning(
+                        "LLM provider call failed",
+                        extra={
+                            "llm_provider": self.name,
+                            "llm_model": self.model,
+                            "error_code": classified.code,
+                            "error_type": type(error).__name__,
+                            "attempt": attempt,
+                        },
+                    )
+                    in_window = self._clock() - started_at < self.retry_window_seconds
+                    if classified.retryable and attempt < attempts and in_window:
+                        retry = True
+                    else:
+                        message = classified.message
+                        if classified.retryable and attempts > 1:
+                            message = f"{message} It did not recover after {attempt} attempts."
+                        raise LLMProviderError(
+                            classified.code, message, classified.status_code
+                        ) from error
+            if retry:
+                metrics.record_llm_retry(self.name)
+                self._sleep(min(0.2 * 2 ** (attempt - 1), 2.0) + random.uniform(0, 0.1))
         raise AssertionError("unreachable: the loop always returns or raises")  # pragma: no cover
