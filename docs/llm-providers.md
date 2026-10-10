@@ -30,6 +30,7 @@ a cloud one would send data somewhere the operator did not choose.
 | `LLM_TIMEOUT_SECONDS` | `30` | Per-request timeout sent to the provider. |
 | `LLM_MAX_RETRIES` | `1` | Extra attempts after a transient failure. `0` to `3`. |
 | `REQUEST_DEADLINE_SECONDS` | `25` | The whole question (generation, repairs and query) must finish inside this. |
+| `FRONTEND_REQUEST_TIMEOUT_MS` | `30000` | How long the dashboard and its proxy wait (build time: rebuild the frontend image after changing it). Keep it above `REQUEST_DEADLINE_SECONDS`. |
 | `LANGSMITH_TRACING` | `false` | Optional tracing. See [Tracing](#tracing-langsmith-optional-off-by-default). |
 
 `LLM_MODE` and `GEMINI_MODEL` were replaced by `LLM_PROVIDER` and `LLM_MODEL`. If either is still

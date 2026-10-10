@@ -28,7 +28,7 @@ Copy `.env.example` to `.env` for local Compose use. `.env` is ignored by Git. R
 | `RATE_LIMIT_REQUESTS` | Requests per route family and principal per window | Defaults to 30. |
 | `RATE_LIMIT_LLM_REQUESTS` | Stricter limit for `/generate` and `/ask` | Defaults to `min(RATE_LIMIT_REQUESTS, 20)`. |
 | `RATE_LIMIT_WINDOW_SECONDS` | Sliding window size | Defaults to 60 seconds. |
-| `REQUEST_DEADLINE_SECONDS` | Overall budget for one `/ask` | Defaults to 25. Keep it below the frontend's 30-second timeout. |
+| `REQUEST_DEADLINE_SECONDS` | Overall budget for one `/ask` | Defaults to 25. Keep it below the frontend's timeout (`FRONTEND_REQUEST_TIMEOUT_MS`, default 30000, applied when the frontend image is built). Slow local models need both raised. |
 | `AUTH_MODE` | `jwt`, `static` (development), or `disabled` (development) | Production requires `jwt`. |
 | `JWT_ALGORITHM` | `HS256`, `RS256`, or `ES256` | `RS256` by default. |
 | `JWT_SECRET` | HS256 signing secret | 32+ characters; supply through a secret store. |

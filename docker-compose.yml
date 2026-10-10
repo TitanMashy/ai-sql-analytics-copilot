@@ -165,6 +165,7 @@ services:
       context: ./frontend
       args:
         INTERNAL_API_URL: http://backend:8000
+        NEXT_PUBLIC_REQUEST_TIMEOUT_MS: ${FRONTEND_REQUEST_TIMEOUT_MS:-30000}
     ports:
       - "3000:3000"
     init: true
