@@ -26,7 +26,7 @@ jobs:
       FUZZ_SEED: "20261006"
       FUZZ_ITERATIONS: "300"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -96,7 +96,7 @@ jobs:
       REQUIRE_INTEGRATION: "1"
       PGPASSWORD: ci-owner-password
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -151,7 +151,7 @@ jobs:
     name: Frontend (lint, tests, build, audit)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -180,7 +180,7 @@ jobs:
       POSTGRES_PASSWORD: ci-only-password
       ANALYTICS_DATABASE_PASSWORD: ci-only-readonly-password
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Validate Compose files
         run: |
           docker compose config --quiet
