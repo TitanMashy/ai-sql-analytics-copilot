@@ -192,14 +192,14 @@ jobs:
       - name: Build frontend image
         run: docker build -t analytics-frontend:ci --build-arg INTERNAL_API_URL=http://backend:8000 frontend
       - name: Scan backend image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: analytics-backend:ci
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
       - name: Scan frontend image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: analytics-frontend:ci
           severity: HIGH,CRITICAL
