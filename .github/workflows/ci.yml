@@ -17,7 +17,7 @@ jobs:
     name: Backend (lint, types, unit tests, coverage)
     runs-on: ubuntu-latest
     env:
-      LLM_MODE: mock
+      LLM_PROVIDER: mock
       APP_ENV: test
       DATABASE_URL: sqlite:///./ci-app.db
       ANALYTICS_DATABASE_URL: sqlite:///./ci-analytics.db
@@ -89,7 +89,7 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       APP_ENV: test
-      LLM_MODE: mock
+      LLM_PROVIDER: mock
       DATABASE_URL: postgresql+psycopg://app:ci-owner-password@localhost:5432/app
       ANALYTICS_DATABASE_URL: postgresql+psycopg://analytics_readonly:ci-readonly-password@localhost:5432/app
       # A missing database must FAIL these tests, never skip them.

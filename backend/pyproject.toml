@@ -10,7 +10,9 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115,<1.0",
     "alembic>=1.14,<2.0",
-    "google-genai>=1.0,<2.0",
+    "langchain-core>=1.0,<2.0",
+    "langchain-google-genai>=4.0,<5.0",
+    "langchain-ollama>=1.0,<2.0",
     "sqlglot>=27.0,<28.0",
     "pydantic>=2.9,<3.0",
     "pydantic-settings>=2.6,<3.0",
@@ -40,6 +42,7 @@ testpaths = ["tests"]
 markers = [
     "integration: requires a live PostgreSQL analytics database ",
     "fuzz: randomized validator tests; FUZZ_ITERATIONS controls how many cases run",
+    "live: calls a real model provider (Gemini or Ollama); needs RUN_LIVE_LLM_TESTS=1 and never runs by default",
 ]
 
 [tool.ruff]

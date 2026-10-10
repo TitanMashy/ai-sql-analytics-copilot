@@ -57,7 +57,7 @@ groups:
           runbook: docs/runbooks/llm-provider-outage.md
 
       - alert: AnalyticsLlmConfigurationError
-        expr: sum(increase(analytics_llm_errors_total{code=~"LLM_CONFIGURATION_ERROR|LLM_MODEL_UNAVAILABLE"}[10m])) > 0
+        expr: sum(increase(analytics_llm_errors_total{code=~"LLM_CONFIGURATION_ERROR|LLM_CREDENTIALS_INVALID|LLM_MODEL_UNAVAILABLE"}[10m])) > 0
         labels:
           severity: page
         annotations:

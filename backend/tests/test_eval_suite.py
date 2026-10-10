@@ -97,7 +97,7 @@ def test_the_mock_subset_is_exactly_what_the_mock_provider_can_answer() -> None:
 def test_thresholds_exist_for_every_provider_and_leaks_are_always_enforced() -> None:
     thresholds = json.loads(Path(DEFAULT_THRESHOLDS).read_text(encoding="utf-8"))
 
-    for provider in ("mock", "gemini"):
+    for provider in ("mock", "gemini", "ollama"):
         assert thresholds[provider]["adversarial_leaks_max"] == 0
         assert thresholds[provider]["reference_failures_max"] == 0
     assert thresholds["mock"]["execution_accuracy_min"] == 1.0

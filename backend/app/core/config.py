@@ -9,6 +9,8 @@ from typing import Any, Literal
 from pydantic import Field, SecretStr, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
+
 
 class ConfigurationError(RuntimeError):
     """The process cannot start with the supplied configuration.
@@ -29,8 +31,24 @@ class Settings(BaseSettings):
     gemini_api_key: SecretStr | None = Field(
         default=None, validation_alias="GEMINI_API_KEY", repr=False
     )
-    gemini_model: str = Field(default="gemini-2.5-flash", validation_alias="GEMINI_MODEL")
-    llm_mode: Literal["mock", "gemini"] = Field(default="mock", validation_alias="LLM_MODE")
+    # Model provider, selected explicitly. There is no fallback between providers.
+    llm_provider: Literal["mock", "gemini", "ollama"] = Field(
+        default="mock", validation_alias="LLM_PROVIDER"
+    )
+    llm_model: str | None = Field(default=None, validation_alias="LLM_MODEL")
+    ollama_base_url: str = Field(
+        default="http://localhost:11434", validation_alias="OLLAMA_BASE_URL"
+    )
+    # Extra attempts after a transient provider failure (the only retry in the model path).
+    llm_max_retries: int = Field(default=1, ge=0, le=3, validation_alias="LLM_MAX_RETRIES")
+    # Names replaced by LLM_PROVIDER and LLM_MODEL. They are read only to refuse to start: an
+    # ignored LLM_MODE would silently leave the app on the mock provider.
+    legacy_llm_mode: str | None = Field(
+        default=None, validation_alias="LLM_MODE", repr=False, exclude=True
+    )
+    legacy_gemini_model: str | None = Field(
+        default=None, validation_alias="GEMINI_MODEL", repr=False, exclude=True
+    )
     environment: Literal["development", "test", "production"] = Field(
         default="development", validation_alias="APP_ENV"
     )
@@ -157,6 +175,14 @@ class Settings(BaseSettings):
             return None
         return value
 
+    @field_validator("ollama_base_url")
+    @classmethod
+    def validate_ollama_base_url(cls, value: str) -> str:
+        value = value.strip().rstrip("/")
+        if not value.startswith(("http://", "https://")):
+            raise ValueError("OLLAMA_BASE_URL must start with http:// or https://.")
+        return value
+
     @field_validator("log_level")
     @classmethod
     def validate_log_level(cls, value: str) -> str:
@@ -188,6 +214,13 @@ class Settings(BaseSettings):
         return self.enable_direct_sql_endpoints
 
     @property
+    def effective_llm_model(self) -> str | None:
+        """The configured model, or the Gemini default; None for mock (and unset Ollama)."""
+        if self.llm_model and self.llm_model.strip():
+            return self.llm_model.strip()
+        return DEFAULT_GEMINI_MODEL if self.llm_provider == "gemini" else None
+
+    @property
     def effective_llm_rate_limit(self) -> int:
         """LLM-backed calls are limited more strictly than other analytics routes."""
         if self.rate_limit_llm_requests is not None:
@@ -200,12 +233,21 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_production_configuration(self) -> Settings:
+        renamed = []
+        if (self.legacy_llm_mode or "").strip():
+            renamed.append("LLM_MODE is no longer supported; set LLM_PROVIDER instead.")
+        if (self.legacy_gemini_model or "").strip():
+            renamed.append("GEMINI_MODEL is no longer supported; set LLM_MODEL instead.")
+        if renamed:
+            raise ValueError(" ".join(renamed))
+        if self.llm_provider == "ollama" and not (self.llm_model and self.llm_model.strip()):
+            raise ValueError("LLM_MODEL is required when LLM_PROVIDER=ollama.")
         if self.is_production:
             database_is_postgres = self.database_url.startswith("postgresql")
             analytics_database_is_postgres = self.analytics_database_url.startswith("postgresql")
             if not database_is_postgres or not analytics_database_is_postgres:
                 raise ValueError("Production requires PostgreSQL application and analytics URLs.")
-            if self.llm_mode == "mock":
+            if self.llm_provider == "mock":
                 raise ValueError("The mock provider is disabled in production.")
             if self.auth_mode != "jwt":
                 raise ValueError("Production requires AUTH_MODE=jwt.")

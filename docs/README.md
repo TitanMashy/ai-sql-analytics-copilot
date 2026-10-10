@@ -30,6 +30,7 @@ state and handoff.
 | [operations.md](operations.md) | Start, migrate, release, roll back, back up, respond to incidents |
 | [capacity.md](capacity.md) | Sizing and how to run the k6 load test |
 | [slos.md](slos.md) | Service objectives and the alerts behind them |
+| [llm-providers.md](llm-providers.md) | Choosing mock, Gemini or Ollama; the settings, error codes and the one retry policy |
 | [evaluation.md](evaluation.md) | The text-to-SQL evaluation suite and its thresholds |
 | [runbooks/](runbooks/) | One page per alert or incident type |
 | [drills/](drills/) | Restore and rollback rehearsals |

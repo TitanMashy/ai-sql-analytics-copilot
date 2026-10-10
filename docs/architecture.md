@@ -7,7 +7,7 @@ flowchart TD
     Middleware --> API[FastAPI routes]
     API --> Request[Validated request]
     Request --> Context[Schema + business definitions + bounded conversation]
-    Context --> Provider[Gemini or mock LLMProvider]
+    Context --> Provider[LLMProvider: mock, or LangChain chat model for Gemini or Ollama]
     Provider --> Parsed[Structured SQL response]
     Parsed --> Generate{Endpoint}
     Generate -->|/generate| SQLResponse[SQL response; not executed]
@@ -46,7 +46,7 @@ The conversation store sits behind a small interface (`ConversationStore`), so t
 
 1. Authenticate (JWT) and rate limit (per principal and route family).
 2. Resolve conversation context (owner-checked) and the full schema.
-3. Call the provider on a worker thread, bounded by the request deadline.
+3. Call the provider on a worker thread, bounded by the request deadline. The provider is built by `app/llm/factory.py`; for Gemini and Ollama it is a LangChain chat model wrapped by `LangChainSQLProvider`, which owns the prompt, the response contract, error classification and the single transient retry. LangChain supplies model invocation only; validation, tenancy and execution are untouched by it.
 4. Validate the SQL (AST, allowlists, enforced `LIMIT`), then execute it in a read-only transaction scoped to the caller's tenant, after an `EXPLAIN` cost pre-flight.
 5. On a repairable failure, repair with a sanitized hint and go back to step 4, within the deadline.
 6. Analyze the result (KPI, chart, summary), store the exchange, write the audit event, and return the answer with its `request_id`.

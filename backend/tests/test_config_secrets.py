@@ -21,7 +21,7 @@ def fresh_settings(monkeypatch):
         "METRICS_TOKEN_FILE",
         "AUTH_MODE",
         "APP_ENV",
-        "LLM_MODE",
+        "LLM_PROVIDER",
     ):
         monkeypatch.delenv(name, raising=False)
     get_settings.cache_clear()
@@ -96,7 +96,7 @@ def test_missing_and_empty_files_are_reported_by_name(tmp_path, monkeypatch) -> 
 
 def test_invalid_configuration_lists_every_problem_without_values(monkeypatch) -> None:
     monkeypatch.setenv("APP_ENV", "production")
-    monkeypatch.setenv("LLM_MODE", "gemini")
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://app:hunter2@db/app")
     monkeypatch.setenv("ANALYTICS_DATABASE_URL", "postgresql+psycopg://ro:hunter3@db/app")
     monkeypatch.setenv("AUTH_MODE", "disabled")

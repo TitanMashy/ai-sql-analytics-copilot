@@ -35,6 +35,9 @@ class StructuredFormatter(logging.Formatter):
             "duration_ms",
             "helpful",
             "error_code",
+            "llm_provider",
+            "llm_model",
+            "attempt",
         ):
             if hasattr(record, field):
                 payload[field] = getattr(record, field)

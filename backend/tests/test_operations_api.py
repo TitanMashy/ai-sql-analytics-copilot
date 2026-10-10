@@ -57,7 +57,7 @@ def test_readiness_is_ready_when_everything_is_available(healthy_databases) -> N
 
 
 def test_missing_llm_key_reports_degraded_with_http_200(healthy_databases, monkeypatch) -> None:
-    monkeypatch.setattr("app.api.health.get_settings", lambda: Settings(llm_mode="gemini"))
+    monkeypatch.setattr("app.api.health.get_settings", lambda: Settings(llm_provider="gemini"))
 
     with TestClient(app) as client:
         response = client.get("/health/ready")
@@ -101,7 +101,7 @@ def test_liveness_never_touches_dependencies() -> None:
 
 
 def test_unready_and_degraded_do_not_change_liveness(healthy_databases, monkeypatch) -> None:
-    monkeypatch.setattr("app.api.health.get_settings", lambda: Settings(llm_mode="gemini"))
+    monkeypatch.setattr("app.api.health.get_settings", lambda: Settings(llm_provider="gemini"))
 
     with TestClient(app) as client:
         assert client.get("/health").status_code == 200
@@ -137,7 +137,7 @@ def test_diagnostics_are_disabled_in_production_without_a_token(
     healthy_databases, monkeypatch
 ) -> None:
     production = Settings.model_construct(
-        environment="production", metrics_token=None, llm_mode="gemini", app_version="1.0.0"
+        environment="production", metrics_token=None, llm_provider="gemini", app_version="1.0.0"
     )
     monkeypatch.setattr("app.api.health.get_settings", lambda: production)
 

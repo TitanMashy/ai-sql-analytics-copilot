@@ -3,9 +3,8 @@ from functools import lru_cache
 from app.analytics.dependencies import get_analytics_query_service
 from app.conversation.service import get_conversation_memory
 from app.core.config import get_settings
-from app.llm.gemini_provider import GeminiProvider
-from app.llm.mock_provider import MockLLMProvider
-from app.llm.provider import LLMProvider, LLMProviderError
+from app.llm.factory import build_llm_provider
+from app.llm.provider import LLMProvider
 from app.services.generation import SQLGenerationService
 from app.services.result_summary import ResultSummaryService
 from app.services.schema_retriever import SchemaRetriever
@@ -13,24 +12,7 @@ from app.services.schema_retriever import SchemaRetriever
 
 @lru_cache
 def get_llm_provider() -> LLMProvider:
-    settings = get_settings()
-    if settings.llm_mode.casefold() == "mock":
-        if settings.is_production:
-            raise LLMProviderError(
-                "LLM_CONFIGURATION_ERROR",
-                "The mock provider is disabled in production.",
-                503,
-            )
-        return MockLLMProvider(
-            latency_ms=settings.mock_llm_latency_ms, jitter_ms=settings.mock_llm_jitter_ms
-        )
-    if settings.llm_mode.casefold() == "gemini":
-        return GeminiProvider(settings)
-    raise LLMProviderError(
-        "LLM_CONFIGURATION_ERROR",
-        "LLM_MODE must be 'mock' or 'gemini'.",
-        503,
-    )
+    return build_llm_provider(get_settings())
 
 
 @lru_cache
