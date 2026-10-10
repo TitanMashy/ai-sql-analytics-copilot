@@ -53,15 +53,11 @@ Production configuration rejects SQLite URLs and the deterministic mock provider
 
 ## Docker Compose
 
-For local development, use the mock provider and run migrations/seeding before starting the complete stack:
+For local development the default is the mock provider (`LLM_PROVIDER=mock`), which needs no key. Start the stack; the one-shot `migrate` service runs `alembic upgrade head` first and the backend waits for it. Then load the demo data:
 
 ```bash
-LLM_MODE=mock docker compose up -d postgres
-
-docker compose run --rm backend alembic upgrade head
-docker compose run --rm backend python -m app.db.seed
-
 docker compose up --build -d
+docker compose --profile demo run --rm seed   # refuses to run when APP_ENV=production
 ```
 
 The dashboard is at http://localhost:3000. The backend publishes no host port: the Next.js server proxies only the routes the UI needs (`ask`, conversations, schema tables, health) to the backend service, so `/query`, `/validate`, `/generate`, and `/metrics` are unreachable from the browser. To call the backend directly while developing, add the override file, which publishes `127.0.0.1:8000` and enables the direct-SQL endpoints:
@@ -107,10 +103,10 @@ Use HTTPS at a trusted reverse proxy and restrict public access to the API, metr
 
 ## Limitations
 
-Rate limiting, metrics, and conversations are process-local. Multi-instance deployments need a shared rate limiter, metrics aggregation, and durable conversation storage. The application validates signed tokens and scopes every query to the token's customer, but it does not issue tokens: supply an identity provider (or your own issuer) that sets `sub`, `iss`, `aud`, `exp`, `roles`, and `customer_id`. Result caching is intentionally absent because invalidation policy is not defined. `INTERNAL_API_URL` is applied when `next build` evaluates the proxy rewrites, so it is a build-time value for the frontend image. Production connection-pool sizing should follow real load tests and the PostgreSQL connection budget.
+Rate limiting and the JSON metrics are process-local, so the supported deployment is a single backend instance (several replicas would each enforce their own limit). Conversations are durable with `CONVERSATION_STORE=postgres`. The application validates signed tokens and scopes every query to the token's customer, but it does not issue tokens: supply an identity provider (or your own issuer) that sets `sub`, `iss`, `aud`, `exp`, `roles`, and `customer_id`. Result caching is intentionally absent because invalidation policy is not defined. `INTERNAL_API_URL` is applied when `next build` evaluates the proxy rewrites, so it is a build-time value for the frontend image. Production connection-pool sizing should follow real load tests and the PostgreSQL connection budget.
 
 
-## Sprint 12 settings and services
+## Durable state, audit, and secrets
 
 | Variable | Purpose | Default |
 |---|---|---|

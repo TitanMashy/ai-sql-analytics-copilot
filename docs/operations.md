@@ -8,6 +8,7 @@ local development see the README; for the settings reference see [deployment.md]
 - [Components](#components)
 - [Fresh-environment walkthrough](#fresh-environment-walkthrough)
 - [Health and probes](#health-and-probes)
+- [Model provider operations](#model-provider-operations)
 - [Migrations](#migrations)
 - [Scaling](#scaling)
 - [Secrets and rotation](#secrets-and-rotation)
@@ -79,6 +80,17 @@ unavailable: `llm_provider` (no API key configured). An orchestrator therefore
 keeps a degraded instance in service rather than restarting it for something a restart cannot fix;
 alerts, not probes, are how degradation is noticed. The Compose healthchecks encode this:
 liveness never touches a dependency.
+
+## Model provider operations
+
+The provider is chosen by `LLM_PROVIDER` (`mock`, `gemini`, `ollama`) and never changes by itself: an unavailable provider is an error, not a switch. Setup, settings and every error code are in [llm-providers.md](llm-providers.md); the incident steps are in the [LLM provider runbook](runbooks/llm-provider-outage.md).
+
+- **Switch providers** by editing `.env` and running `docker compose up -d --build` (or restarting the process). Check the result with `python backend/scripts/llm_smoke.py`, which exercises the configured provider end to end.
+- **Timeouts and retries.** `LLM_TIMEOUT_SECONDS` bounds one provider call; `LLM_MAX_RETRIES` extra attempts apply only to transient infrastructure failures; the whole question must finish inside `REQUEST_DEADLINE_SECONDS` (keep it below the frontend's 30 s). Rate limits, timeouts, credential errors and malformed output are not retried.
+- **What you will see.** `analytics_llm_errors_total{code}`, `analytics_llm_retries_total{provider}` and `analytics_llm_call_duration_seconds{provider}`; logs carry `llm_provider`, `llm_model`, `error_code` and `attempt`, never prompts or SQL.
+- **Readiness does not call the provider.** `/health/ready` reports `degraded: ["llm_provider"]` only when the provider is unconfigured (for example a missing Gemini key); a down Ollama or a Gemini outage appears as request errors, so alert on the error metrics.
+- **Ollama.** Runs on the host, not in Compose; from the container it is `http://host.docker.internal:11434` (the default in Compose). The app never pulls a model or starts Ollama.
+- **Optional LangSmith tracing** (`LANGSMITH_TRACING=true`): sends allowlisted metadata only. If traces do not appear, check that `LANGSMITH_API_KEY` is set (without it tracing stays off and a warning is logged), the endpoint is reachable from the container, and that LangSmith is not rate limiting; a LangSmith outage drops traces and never affects answers. It is off by default and not needed for anything else.
 
 ## Migrations
 

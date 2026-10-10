@@ -20,7 +20,7 @@ flowchart TD
     Response --> Next
     Executor -. classified repairable error .-> Repair[Bounded SQL repair]
     Repair --> Validator
-    Middleware -. request IDs, timings, counters .-> Ops[Structured logs + Prometheus metrics + traces]
+    Middleware -. request IDs, timings, counters .-> Ops[Structured logs + Prometheus metrics + optional sanitized LangSmith spans]
     API -. every ask and rating .-> Audit[(Audit trail: ids and hashes only)]
     API --> Conversations[(Conversations: memory or PostgreSQL)]
     Middleware --> Limiter[(Rate limiter: in memory)]
@@ -34,13 +34,15 @@ FastAPI middleware bounds request bodies, assigns request IDs, adds security hea
 
 ## State and scaling
 
-The backend can be stateless. Its three pieces of state each have a process-local default for a single instance and a shared implementation for several:
+The supported deployment is a **single backend instance**. The backend keeps three pieces of state:
 
-| State | Default (one instance) | Shared (many replicas) | Setting |
-|---|---|---|---|
-| Conversations and turns | in memory, lost on restart | PostgreSQL tables, survive restarts and deploys | `CONVERSATION_STORE` |
+| State | Where it lives | Setting |
+|---|---|---|
+| Conversations and turns | PostgreSQL tables (survive restarts and deploys) or in memory | `CONVERSATION_STORE` (Compose default `postgres`) |
+| Rate-limit counters | in process memory | `RATE_LIMIT_*` |
+| Metrics (JSON snapshot and Prometheus registry) | in process memory | scrape the one instance |
 
-The conversation store sits behind a small interface (`ConversationStore`), so the in-memory version doubles as a test fake. The operational tables (`conversations`, `conversation_turns`, `audit_log`) live on their own SQLAlchemy base (`app/db/operational.py`), separate from the fleet models, so they can never become part of the analytics allowlist, the prompt schema, or the `analytics` views.
+The conversation store sits behind a small interface (`ConversationStore`), so the in-memory version doubles as a test fake. The operational tables (`conversations`, `conversation_turns`, `audit_log`) live on their own SQLAlchemy base (`app/db/operational.py`), separate from the fleet models, so they can never become part of the analytics allowlist, the prompt schema, or the `analytics` views. Running several replicas would work for conversations but each replica would enforce its own rate limit; a shared limiter was removed as unnecessary for one instance (`docs/Sequence.md`).
 
 ## Request pipeline
 

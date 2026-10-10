@@ -8,7 +8,7 @@ The system is a modular monolith: Next.js presentation layer -> FastAPI -> schem
 
 End-to-end, a request is authenticated (signed bearer token) and rate limited per principal; a question is length-validated and assigned a request ID; schema and business definitions are retrieved; the selected provider returns structured SQL; `/generate` returns that SQL without execution, while `/ask` sends it through AST validation, bounded repair when a classified error is repairable, and the read-only query service. Successful rows then receive KPI, visualization, warning, and grounded summary metadata for the frontend. No provider-generated SQL bypasses validation.
 
-See [docs/architecture.md](docs/architecture.md), [docs/database-schema.md](docs/database-schema.md), [docs/business-definitions.md](docs/business-definitions.md), [docs/deployment.md](docs/deployment.md), [docs/operations.md](docs/operations.md) (deploy, scale, rotate, back up, release, roll back, respond), [docs/evaluation.md](docs/evaluation.md), [docs/slos.md](docs/slos.md), [docs/capacity.md](docs/capacity.md), [docs/threat-model.md](docs/threat-model.md), and [docs/production-security-review.md](docs/production-security-review.md).
+Documentation index: [docs/README.md](docs/README.md). Model providers (mock, Gemini, Ollama, tracing): [docs/llm-providers.md](docs/llm-providers.md). See also [docs/architecture.md](docs/architecture.md), [docs/database-schema.md](docs/database-schema.md), [docs/business-definitions.md](docs/business-definitions.md), [docs/deployment.md](docs/deployment.md), [docs/operations.md](docs/operations.md) (deploy, scale, rotate, back up, release, roll back, respond), [docs/evaluation.md](docs/evaluation.md), [docs/slos.md](docs/slos.md), [docs/capacity.md](docs/capacity.md), [docs/threat-model.md](docs/threat-model.md), and [docs/production-security-review.md](docs/production-security-review.md).
 
 ## Stack
 
@@ -27,6 +27,8 @@ python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 ```
+
+On Windows, keep the project in a short path (for example `C:\src\...`) or enable long paths: a dependency of the model integrations (`google-genai`) has very long file names, and `pip install` fails with `WinError 206` when the virtual environment is nested deeply.
 
 Without `.env`, the backend uses local SQLite defaults and `AUTH_MODE=disabled` (a development-only mode that production rejects). Start it with `make dev`; the API is at http://localhost:8000. `GET /health` is liveness, `GET /health/ready` checks required databases/provider configuration, and development API docs are at `/docs`.
 
@@ -78,6 +80,26 @@ The analytics DB uses a separate `analytics_readonly` role with a distinct passw
 
 Choose the model explicitly with `LLM_PROVIDER` (`mock`, `gemini` or `ollama`) and `LLM_MODEL`; Gemini also needs `GEMINI_API_KEY`. Mock mode requires no key, is deterministic, and is disabled in production. There is no fallback between providers: if the selected one is down the request fails with a classified error. Generated SQL is never executed after a provider failure, and SQL from every provider is validated the same way. Optional LangSmith tracing (`LANGSMITH_TRACING`, off by default) records only allowlisted metadata, never questions, SQL or rows. `python scripts/llm_smoke.py` checks the configured provider end to end. Setup for each provider, including Ollama on macOS and Docker networking, is in [docs/llm-providers.md](docs/llm-providers.md).
 
+### Switching the model provider
+
+Selection is explicit, in `.env` (Compose) or the environment (running directly). There is no fallback: if the selected provider is down the request fails.
+
+```bash
+# Offline and deterministic (the default). No key, no model.
+LLM_PROVIDER=mock
+
+# Google Gemini. Model ids retire, so set LLM_MODEL explicitly.
+LLM_PROVIDER=gemini
+LLM_MODEL=gemini-3.6-flash
+GEMINI_API_KEY=...
+
+# A local model through Ollama (you start Ollama and pull the model yourself).
+LLM_PROVIDER=ollama
+LLM_MODEL=qwen2.5-coder:7b
+```
+
+Apply a change with `docker compose up -d --build` (or restart `make dev`). Check the configured provider end to end with `python backend/scripts/llm_smoke.py`. `LLM_MODE` and `GEMINI_MODEL` are no longer accepted and stop startup with a message.
+
 Representative supported questions in deterministic mock mode include:
 
 - How many active vehicles do we have?
@@ -86,7 +108,7 @@ Representative supported questions in deterministic mock mode include:
 - Which vehicles had the highest idle time?
 - Show fuel consumption by vehicle.
 
-For follow-ups, send `conversation_id` on subsequent `/ask` calls. The backend retains at most eight recent turns and 2,000 context characters by default. Conversation state is process-local and is not durable or user-authenticated; caller context is untrusted prompt data, not an authorization input.
+For follow-ups, send `conversation_id` on subsequent `/ask` calls. The backend retains at most eight recent turns and 2,000 context characters by default. Conversations are owner-scoped (another user gets a 404). They are durable in PostgreSQL with `CONVERSATION_STORE=postgres` (the Compose default) and in memory otherwise; results are never stored, only text. Caller context is untrusted prompt data, not an authorization input.
 
 The repair loop is deliberately narrow: only classified repairable parse/schema/execution errors are sent back to the provider, with a configurable maximum of three attempts. Every repaired query returns through the same SQLGlot validator and read-only executor. Security, permission, timeout, complexity, and result-limit failures are not automatically repaired.
 
@@ -160,10 +182,10 @@ GitHub Actions (`.github/workflows/`) runs on every push: backend lint, format c
 - **Engineering challenges:** maintaining a strict SQL trust boundary across generation, repair, and execution; bounding conversation and request size; and making provider/database failures observable without leaking sensitive input.
 - **Technical decisions:** modular monolith rather than extra services; provider abstraction with deterministic mock mode; SQLGlot AST validation plus a separate PostgreSQL read-only role; backend-selected visualization metadata; and process-local metrics/rate limiting sized to the current Compose deployment.
 - **Security considerations:** model output is untrusted; all generated and repaired SQL is revalidated; database URLs/keys are runtime secrets; request bodies and expensive endpoints are bounded; and errors/logging use request IDs without returning stack traces or recording questions/SQL.
-- **Production-oriented work:** environment-specific settings, pooled connections and timeouts, health/readiness, structured telemetry, one bounded provider retry policy, non-root containers, distinct DB credentials, and automated CI checks. These controls do not replace authentication, tenant isolation, shared multi-instance services, or a managed production ingress.
+- **Production-oriented work:** environment-specific settings, pooled connections and timeouts, health/readiness, structured telemetry, one bounded provider retry policy, non-root containers, distinct DB credentials, and automated CI checks. Authentication and tenant isolation are in the application; a managed production ingress, an identity provider, and shared multi-instance services are not.
 
 ## Limitations
 
-The service validates signed tokens and scopes data per customer, but it has no identity provider: supply tokens carrying `sub`, `iss`, `aud`, `exp`, `roles`, and `customer_id`. There is no token revocation before expiry. Metrics are process-local counters (scrape every replica); there is no built-in log or metric aggregation. Result rows are never stored or cached, so a restored conversation shows its text but needs the question asked again to show data. The first measured baselines (evaluation accuracy, load-test saturation point, coverage thresholds, restore drill, rollback rehearsal) are recorded in `docs/evaluation.md`, `docs/capacity.md`, and `docs/drills/` once they have been run against a real environment; until then those documents describe how to take them.
+The service validates signed tokens and scopes data per customer, but it has no identity provider: supply tokens carrying `sub`, `iss`, `aud`, `exp`, `roles`, and `customer_id`. There is no token revocation before expiry. Metrics are process-local counters (scrape every replica); there is no built-in log or metric aggregation. Result rows are never stored or cached, so a restored conversation shows its text but needs the question asked again to show data. Measured baselines: the deterministic mock evaluation is recorded in `docs/evaluation.md`. Evaluation baselines for Gemini and Ollama, the load-test saturation point, the restore drill and the rollback rehearsal have not been run; those documents describe how to take them.
 
-Future improvements include an identity provider integration, query-cost budgets learned from observed plans, per-tenant quotas, and multi-region operation. These are not implemented.
+Out of scope and not implemented: an identity provider integration, multi-replica scale-out, multi-region operation, embeddings, and automatic fallback between model providers (excluded on purpose). The project is closed; the final verification record is in [progress.md](progress.md).

@@ -13,10 +13,11 @@ The technically interesting parts are the modular LLM provider boundary, determi
 ## 2. Current Status
 
 ```text
-Current status: Sprints 1–12 implemented. The backend, frontend and Docker Compose stack were run and
-verified in the stabilization pass (section 22), with the exceptions listed there under "Not run".
-Sprint 13 (LangChain model boundary and explicit provider switching) is complete and recorded in section 23.
-Sprint 14 (Ollama, optional sanitized LangSmith tracing, honest cross-provider evaluation) is complete except for the live checks listed in section 24. Sprint 15 (closeout) is planned in `final_sprints.md`.
+Current status: all planned work is complete. Sprints 1-15 are done, including the stabilization pass,
+the simplification sequence (docs/Sequence.md), the LangChain model boundary (Sprint 13), Ollama,
+optional LangSmith tracing and cross-provider evaluation (Sprint 14), and the closeout (Sprint 15).
+The project is closed; section 25 is the closeout record: final verification, invariants, what was
+and was not run, and the final Git state. Nothing further is planned.
 ```
 
 | Sprint | Status | Description |
@@ -24,148 +25,135 @@ Sprint 14 (Ollama, optional sanitized LangSmith tracing, honest cross-provider e
 | Sprint 1 | COMPLETE | Repository foundation, FastAPI startup, configuration, logging, SQLAlchemy sessions, PostgreSQL Compose setup, tests, and developer tooling. |
 | Sprint 2 | COMPLETE | Fleet-management PostgreSQL schema, Alembic migration, realistic deterministic seed data, indexes, schema metadata, and read-only analytics role. |
 | Sprint 3 | COMPLETE | Analytics query/validation API, read-only execution service, result normalization, schema APIs, limits, timeouts, request IDs, and structured errors/logging. |
-| Sprint 4 | COMPLETE | Natural-language SQL generation, schema retrieval, business definitions, provider abstraction, mock provider, Gemini provider, `/generate`, `/ask`, response parsing, and bounded repair. |
+| Sprint 4 | COMPLETE | Natural-language SQL generation, schema retrieval, business definitions, provider abstraction, mock provider, `/generate`, `/ask`, response parsing, and bounded repair. |
 | Sprint 5 | COMPLETE | SQLGlot AST validation, table/column allowlists, dangerous-function/system-table protection, complexity rules, normalized SQL, repair security, and security tests/docs. |
 | Sprint 6 | COMPLETE | Result analyzer, KPI detection, deterministic visualization selection/validation, summaries, data-quality warnings, frontend-ready `/ask` responses, and visualization documentation. |
-| Sprint 7 | COMPLETE | Bounded in-memory conversation context, follow-up-aware SQL generation, and conversation endpoints. |
+| Sprint 7 | COMPLETE | Bounded conversation context, follow-up-aware SQL generation, and conversation endpoints. |
 | Sprint 8 | COMPLETE | Responsive Next.js dashboard, typed API integration, charts/results, Docker service, and frontend validation. |
 | Sprint 9 | COMPLETE | Production configuration, API limits/rate controls, metrics, health/readiness, provider reliability, frontend failure handling, deployment docs, and CI. |
 | Sprint 10 | COMPLETE | Final project documentation, portfolio narrative, verified handoff, and repository readiness. |
-| Sprint 11 | IMPLEMENTED, VERIFIED IN STABILIZATION PASS | Security hardening and correctness: narrowed proxy, JWT auth, per-principal limits, PII-free tenant-scoped analytics views, function allowlist, LIMIT enforcement, SQLSTATE errors and repair hints, request deadline, prompt/retrieval fixes, result-intelligence fixes. Executed for the first time in the stabilization pass (section 22), which found and fixed the defects listed there. |
+| Sprint 11 | COMPLETE (executed in the stabilization pass) | Security hardening and correctness: narrowed proxy, JWT auth, per-principal limits, PII-free tenant-scoped analytics views, function allowlist, LIMIT enforcement, SQLSTATE errors and repair hints, request deadline, prompt/retrieval fixes, result-intelligence fixes. |
+| Sprint 12 | COMPLETE (executed in the stabilization pass; parts later removed) | Durable PostgreSQL conversations and audit trail, Prometheus metrics and alert rules, query-cost pre-flight, golden evaluation suite, fuzz tests, CI quality gates, runbooks. The Redis limiter, SQL cache, OpenTelemetry tracing, Kubernetes manifest and release pipeline built here were removed for the single-instance deployment (docs/Sequence.md section 18). |
+| Stabilization | COMPLETE | First execution of Sprints 11-12; seven defects found and fixed (section 22). |
+| Simplification | COMPLETE | Dead code, OpenAI provider, SQL cache, tracing, Redis limiter, Kubernetes/release pipeline, `static` auth and the e2e suite removed; every remaining recommendation decided (docs/Sequence.md sections 18-19). |
+| Sprint 13 | COMPLETE | LangChain model boundary and explicit provider switching (section 23). |
+| Sprint 14 | COMPLETE except live checks | Ollama, optional sanitized LangSmith tracing, cross-provider evaluation (section 24). Real Ollama inference, live Gemini evaluation and live LangSmith were not run. |
+| Sprint 15 | COMPLETE | Closeout (section 25). |
 
-Recent implementation commits include Sprint 7 `9554013`, Sprint 8 `5639dd7`, and Sprint 9 `e1291e4`. The Sprint 10 documentation updates are intentionally uncommitted.
+Git history is summarized in section 21; older sprints were not tagged.
 
 ## 3. Product Capabilities
 
-Implemented capabilities:
+Implemented and verified capabilities:
 
-- FastAPI modular monolith with health, schema, SQL, generation, and combined analytics endpoints.
-- PostgreSQL fleet-management dataset with deterministic demo seed data.
-- Schema-aware retrieval based on table/column/business terminology.
+- FastAPI modular monolith with health, schema, SQL, generation, conversation, feedback and combined analytics endpoints.
+- PostgreSQL fleet-management dataset with deterministic demo seed data (100 customers, 1,000 vehicles, 50,000 trips and related tables).
+- Schema-aware retrieval based on table/column/business terminology; the full schema is sent by default (11 tables).
 - Business metric definitions for revenue, active vehicles, completed trips, fuel cost, idle time, and payments.
-- Gemini provider using the official `google-genai` SDK and structured JSON output.
-- Deterministic mock provider for development and CI without an API key.
-- Shared provider interface with Gemini and the deterministic mock provider (the legacy OpenAI provider was removed).
-- PostgreSQL AST parsing and security validation with SQLGlot.
-- Explicit application-table allowlist and practical column/alias validation.
-- Read-only analytics database role and permission verification.
-- Bounded SQL repair that re-enters the exact same validator.
-- Result normalization for JSON-safe values.
-- KPI detection for single aggregate results.
-- Deterministic `table`, `kpi`, `bar`, `line`, and `pie` visualization metadata.
-- Visualization field validation and table fallback.
-- Deterministic grounded summaries, empty-result handling, NULL warnings, and configurable summary enablement.
-- Structured JSON logs with request ID, endpoint, validation status, execution time, row count, and status code.
-- Production settings for environment/debug/docs, secret masking, exact CORS origins, validated pool/provider/request/rate-limit configuration.
-- Configurable request-body, question, conversation-context, turn, and SQL size limits.
-- Process-local sliding-window throttling with structured 429 responses for generation, ask, conversation creation, and turn append.
-- Configurable PostgreSQL pools with pre-ping, recycle, checkout/connect timeouts, and per-process shared engines.
-- Request-correlated structured errors, safe response/security headers, health/readiness routes, and process-local JSON metrics.
-- Gemini timeout, bounded exponential retries for transient 5xx responses, and explicit rate-limit/model/timeout/malformed-response classification.
-- Bounded repair metrics and tests confirming timeouts/security/provider failures do not proceed through unsafe repair/execution.
-- Next.js timeout/network error codes, runtime result validation, retry and duplicate-submit handling, and chart/application error boundaries.
-- Non-root production Docker images, distinct PostgreSQL owner/read-only credentials for fresh clusters, Compose health checks, deployment/security docs, and GitHub Actions CI.
+- **Explicit provider selection** through one factory: `mock` (deterministic, offline), `gemini` and `ollama` (both through LangChain chat models). No fallback between providers.
+- Structured JSON model output parsed by one application-owned parser; malformed output is a classified failure, never guessed into SQL.
+- One transient-retry policy and one bounded, deadline-aware repair loop; every repaired statement is validated again.
+- Independent SQL safety: SQLGlot AST validation (SELECT-only, table and function allowlists, schema-qualifier and PII-column rules, joins/nesting/cartesian limits, outer `LIMIT` enforcement), comments stripped from the executed SQL, empty `SELECT`s rejected.
+- Read-only execution: a separate `analytics_readonly` role with SELECT on tenant-scoped, PII-free `analytics` views only, a read-only transaction, `SET LOCAL` timeouts, an `EXPLAIN` cost pre-flight, and a row cap.
+- Authentication (JWT in production, development bypass otherwise), per-principal rate limits (stricter for model calls), owner-scoped conversations, and a request-wide deadline.
+- Conversation context with durable PostgreSQL storage (`CONVERSATION_STORE=postgres`) or in-memory, plus an audit trail that records identifiers and hashes, never content, and a feedback endpoint.
+- Result intelligence after execution: KPI detection, deterministic table/kpi/bar/line/pie metadata with fallbacks, grounded deterministic summaries, formatting, warnings.
+- Observability: structured JSON logs, Prometheus metrics (`/api/v1/metrics/prometheus`), a token-gated JSON snapshot, readiness with `degraded` semantics, an operator diagnostics route, alert rules, SLO rules, a Grafana dashboard and runbooks.
+- Optional LangSmith tracing (off by default) that sends only allowlisted metadata with empty inputs and cannot block or fail a request.
+- Evaluation: a 76-case golden dataset, a runner that reports coverage and failure classes honestly, seeded validator fuzz tests, and a smoke script for the configured provider.
+- Next.js dashboard: same-origin proxy with an explicit route allowlist, CSP and security headers, sign-in, per-message results, restore on reload, delete, feedback, pagination, CSV export, distinct 401/429/504/422 states.
+- Docker Compose (postgres, one-shot migrate, backend, frontend; demo and ops profiles), non-root read-only backend container, Dockerfiles, and GitHub Actions workflows (`ci.yml`, `nightly.yml`, `loadtest.yml`).
 
-Known limitations and optional improvements are listed in Section 16. These are not implemented and are not part of the completed sprint scope.
+Known limitations are in section 16. Anything not listed above or there is not implemented.
 
 ## 4. Architecture
 
 ```text
-User / API Client
+User / API client
         |
         v
-FastAPI Query API
+Next.js (UI + same-origin proxy with an explicit route allowlist)
         |
         v
-SchemaRetriever + Business Definitions
+FastAPI: request id, size limit -> authenticate (JWT) -> per-principal rate limit
         |
         v
-LLMProvider (Gemini or Mock)
-        |
-        v
-Structured SQL Response
-        |
-        v
-SQLGlot AST Validation + Security Rules
-        |
-        v
-AnalyticsQueryService
-        |
-        v
-PostgreSQL analytics_readonly
-        |
-        v
-Result Normalization + Column Profiling
-        |
-        +--> KPI Detection
-        +--> VisualizationSelector
-        +--> Grounded Summary
-        |
-        v
-Frontend-ready Analytics Response
-        |
-        v
-Next.js dashboard (conversation, KPI, chart, table, SQL)
+SQLGenerationService  (request deadline starts)
+   |        |
+   |        +--> conversation context (owner-checked; memory or PostgreSQL)
+   |
+   +--> SchemaRetriever + business definitions
+   |
+   +--> LLMProvider  <-- built by app/llm/factory.py from LLM_PROVIDER
+   |        mock (deterministic)  |  LangChainSQLProvider -> ChatGoogleGenerativeAI | ChatOllama
+   |        UNTRUSTED output: parsed into {sql, explanation, tables_used, confidence}
+   |
+   v
+AnalyticsQueryService   <- the safety boundary; knows nothing about LangChain
+   |  SQLValidator (SQLGlot AST: allowlists, PII, LIMIT, comments stripped)
+   |  read-only transaction + SET LOCAL timeouts + tenant scope + EXPLAIN cost check
+   v
+PostgreSQL as analytics_readonly  ->  tenant-scoped, PII-free `analytics` views  ->  tables
+   |
+   v   (repairable validation or execution error -> back to the provider, bounded, then validated again)
+Result normalization -> KPI detection, VisualizationSelector, grounded summary
+   |
+   v
+Frontend-ready response  ->  dashboard (conversation, KPI, chart, table, SQL)
+
+Alongside: audit event per /ask, Prometheus metrics, JSON logs, optional sanitized LangSmith spans.
 ```
 
 Responsibilities:
 
-- **FastAPI/API layer:** validates request bodies, attaches request IDs, exposes OpenAPI routes, and maps internal errors to structured responses. It does not execute SQL directly.
-- **SchemaRetriever:** selects relevant application tables and business definitions using deterministic keyword/column relevance. It is ready for a future embedding implementation but has no vector database.
-- **LLMProvider:** abstracts SQL generation and repair. `LangChainSQLProvider` (Gemini or Ollama, built by `app/llm/factory.py`) is the real provider; `MockLLMProvider` supplies deterministic queries for tests and demos.
-- **SQLGenerationService:** coordinates question, schema context, provider output, bounded repair, and the existing analytics execution service. Generated SQL is never treated as trusted.
-- **SQLValidator:** parses and validates PostgreSQL SQL before execution.
-- **AnalyticsQueryService:** uses `ANALYTICS_DATABASE_URL`, applies PostgreSQL statement timeout, executes normalized SQL, enforces result limits, classifies database errors, and normalizes rows.
+- **FastAPI/API layer:** validates request bodies, attaches request IDs, authenticates and rate limits, and maps internal errors to structured responses. It does not execute SQL directly.
+- **Model factory (`app/llm/factory.py`):** the only place a provider is chosen or a client is constructed. LangChain supplies model invocation only; prompt policy, the response contract, error classification, retries and repair stay in the application.
+- **SchemaRetriever:** deterministic keyword/column relevance; no embeddings or vector database.
+- **SQLGenerationService:** coordinates question, context, provider output, bounded repair and execution. Generated SQL is never trusted.
+- **SQLValidator and AnalyticsQueryService:** independent of the model layer (a test enforces that neither imports the other's packages).
 - **Result intelligence services:** run only after successful execution and cannot influence SQL generation or execution.
-- **Next.js frontend:** sends typed requests through a same-origin rewrite to FastAPI and renders returned data. It does not generate SQL or make validation, allowlist, metric, or visualization decisions.
-- **PostgreSQL:** the application/migration owner uses `DATABASE_URL`; generated analytics queries use the separate `analytics_readonly` role through `ANALYTICS_DATABASE_URL`.
+- **Next.js frontend:** renders data and holds no SQL, validation or allowlist logic.
+- **PostgreSQL:** the application/migration owner uses `DATABASE_URL`; generated SQL uses only the `analytics_readonly` role through `ANALYTICS_DATABASE_URL`.
 
 ## 5. Technology Stack
 
 ### Backend
 
-- Python 3.12+ (the development environment used Python 3.13)
-- FastAPI and Uvicorn
-- Pydantic v2 and `pydantic-settings`
-- SQLAlchemy 2.x and psycopg 3
+- Python 3.12+ (developed and verified on 3.12.10)
+- FastAPI and Uvicorn; Pydantic v2 and `pydantic-settings`
+- SQLAlchemy 2.x, psycopg 3, Alembic
 - SQLGlot for PostgreSQL AST parsing
-- Google `google-genai` SDK for Gemini
-- pytest and Ruff
+- LangChain: `langchain-core`, `langchain-google-genai`, `langchain-ollama`
+- `prometheus-client`, `pyjwt`
+- pytest, pytest-cov, Ruff, mypy, pip-audit (development)
 
 ### Database
 
-- PostgreSQL 16 via Docker Compose
-- Alembic migration system
-- SQLAlchemy declarative models
-- Main tables: `customers`, `users`, `vehicles`, `drivers`, `trips`, `vehicle_locations`, `fuel_records`, `maintenance_records`, `invoices`, `payments`, and `subscriptions`
-- Internal `seed_runs` table makes seeding idempotent
+- PostgreSQL 16 via Docker Compose; three Alembic migrations (initial schema, `analytics` views, operational tables)
+- Main tables: `customers`, `users`, `vehicles`, `drivers`, `trips`, `vehicle_locations`, `fuel_records`, `maintenance_records`, `invoices`, `payments`, and `subscriptions`; internal `seed_runs`; operational `conversations`, `conversation_turns`, `audit_log`
 
 ### AI
 
 - `LLMProvider` protocol in `backend/app/llm/provider.py`
-- `LangChainSQLProvider` in `backend/app/llm/langchain_provider.py`, built by `backend/app/llm/factory.py`
-- `MockLLMProvider` in `backend/app/llm/mock_provider.py`
-- Structured prompt and parser modules
-- Provider selection is controlled by `LLM_PROVIDER` (`mock`, `gemini`, `ollama`) and `LLM_MODEL`; the example mode is `mock`. Production mode rejects mock mode and requires a configured real provider. Never copy secrets from local environment files into documentation or commits.
+- Factory `backend/app/llm/factory.py`; `LangChainSQLProvider` in `backend/app/llm/langchain_provider.py`; error classification in `backend/app/llm/errors.py`
+- `MockLLMProvider` in `backend/app/llm/mock_provider.py`; shared prompt (`prompt.py`) and parser (`parser.py`)
+- Optional tracing in `backend/app/core/llm_tracing.py`
+- Provider selection is `LLM_PROVIDER` (`mock`, `gemini`, `ollama`) and `LLM_MODEL`. Production rejects mock mode. Never copy secrets into documentation or commits.
 
 ### Frontend
 
-- Next.js 16, React 19, TypeScript, Tailwind CSS, Recharts, Lucide React, Vitest, Testing Library, and jsdom.
-- `frontend/components/layout/app-sidebar.tsx`: workspace shell and switchable conversation list.
-- `frontend/components/analytics/question-composer.tsx`: accessible question input and starter prompts.
-- `frontend/components/analytics/analytics-results.tsx`: summary, KPIs, charts, data table, warnings, and collapsible/copyable SQL.
-- `frontend/components/charts/chart-renderer.tsx`: backend-selected bar, line, area, and pie rendering.
-- `frontend/lib/api.ts`: typed API client; backend failures remain visible and are never replaced with fake results.
-- Next.js rewrites proxy `/api/*` to `INTERNAL_API_URL` (default `http://localhost:8000`) to keep browser requests same-origin without changing backend CORS policy.
+- Next.js 16, React 19, TypeScript, Tailwind CSS, Recharts, Lucide React, Vitest, Testing Library, jsdom.
+- `frontend/next.config.ts`: explicit proxy route list and security headers.
+- `frontend/lib/api.ts`: typed API client; backend failures stay visible and are never replaced with fake results.
+- Components: dashboard, question composer, results, charts, error panels, sidebar (see `frontend/components/`).
 
 ### Infrastructure
 
-- Docker Compose services: `postgres`, `backend`, and `frontend`; health gates are PostgreSQL -> backend -> frontend.
-- Backend Docker image installs runtime dependencies only, runs as non-root, and uses a read-only root filesystem in Compose.
-- Frontend uses the standalone Next.js output and non-root runtime.
-- GitHub Actions runs backend lint/tests, frontend lint/tests/build, and Compose configuration validation without Gemini credentials.
+- Docker Compose services: `postgres`, one-shot `migrate`, `backend`, `frontend`; profiles `demo` (seed) and `ops` (purge). Health gates: PostgreSQL -> migrate -> backend -> frontend.
+- Backend image: runtime dependencies only, non-root, read-only root filesystem in Compose. Frontend: standalone Next.js output, non-root.
+- GitHub Actions: `ci.yml` (backend lint/types/tests/coverage/audit, PostgreSQL integration, frontend, image build and scan), `nightly.yml` (full evaluation against a real model if configured, long fuzz run), `loadtest.yml` (k6). The workflows' YAML parses; they have not run on a GitHub runner in this repository's recorded verification.
 - `.env.example` documents configuration; `.env` is ignored and must never be committed.
-- Make targets include `dev`, `test`, `lint`, `format`, `migrate`, `seed`, `verify-permissions`, `docker-up`, and `docker-down`.
+- Make targets: `dev`, `test`, `lint`, `format`, `typecheck`, `coverage`, `fuzz`, `migrate`, `seed`, `verify-permissions`, `docker-up`, `docker-down`, `eval-check`, `eval`, `lock`, `lock-check`, `loadtest`, `purge`, `backup`, `restore-drill`.
 
 ## 6. LLM Architecture
 
@@ -228,47 +216,32 @@ Read-only PostgreSQL
 
 ## 8. Security Architecture
 
-The LLM is **not** a trusted security boundary. The SQL parser, application allowlist, execution limits, and PostgreSQL permissions are the actual defense layers.
+The model is **not** a trusted security boundary, whichever provider is selected. The SQL validator, the database role and views, the read-only transaction and the execution limits are the actual defense layers, and none of them imports LangChain.
 
 Current controls:
 
-- SQLGlot parses using PostgreSQL syntax before execution.
-- Only one read-only `SELECT`/read-only set operation is allowed; safe CTEs are supported.
-- Rejects `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `DROP`, `ALTER`, `CREATE`, `TRUNCATE`, `GRANT`, `REVOKE`, `COMMENT`, transaction operations, `SELECT INTO`, and row locks.
-- Rejects multiple statements.
-- Explicitly allowlists the eleven application analytics tables.
-- Protects `pg_catalog`, `information_schema`, `pg_toast`, and `pg_*` references.
-- Denies dangerous functions such as file access, `dblink`, command-related functions, and `pg_sleep`.
-- Validates aliases and known columns where practical.
-- Controls joins, nesting, cartesian joins, literal LIMIT values, result row counts, and PostgreSQL statement timeout.
-- Normalizes SQL before execution and returns detailed validation metadata.
-- Uses the separate `analytics_readonly` PostgreSQL role.
-- Repair retries are bounded by `MAX_REPAIR_RETRIES`; security, permission, timeout, complexity, and result-limit failures are not automatically repaired.
-- Request and database errors return structured codes without database stack traces to clients.
+- **Authentication and tenancy.** Every analytics and schema route requires a principal. `AUTH_MODE=jwt` validates signature, expiry, issuer, audience and required claims with a configured algorithm only; `disabled` is development-only and production rejects it at startup and again at runtime. A non-admin token needs a `customer_id`. The tenant comes from the principal, never from the model path.
+- **Tenant isolation and PII.** The analytics role reads only the `analytics` views: PII columns are absent, and rows are filtered by `app.scope` / `app.customer_id`, set per transaction with `SET LOCAL`; an unset scope returns no rows. The role has no privileges on the base tables.
+- **Validator.** SQLGlot parses PostgreSQL SQL; one read-only `SELECT` or set operation (safe CTEs allowed); DML, DDL, transaction control, multiple statements, `SELECT INTO` and row locks are rejected; table and function allowlists; schema qualifiers other than `analytics` rejected; system catalogs and dangerous functions rejected; PII columns are security errors; every `SELECT` must select a column; joins, nesting and cartesian joins are limited; an outer `LIMIT` is enforced.
+- **Executed SQL is the validator's own output.** `normalized_sql` is regenerated from the AST with comments stripped; the model's text is never executed.
+- **Execution limits.** Read-only transaction, `SET LOCAL` statement/lock/idle timeouts, an `EXPLAIN` cost pre-flight (`QUERY_COST_LIMIT`), a row cap, and an overall request deadline.
+- **Repair.** Bounded by `MAX_REPAIR_RETRIES` and the deadline; only classified repairable failures are repaired, security rejections never are, and every repaired statement is validated again.
+- **Rate limiting.** Per principal, stricter for model calls; process-local.
+- **Edge.** The frontend proxy forwards an explicit route list; direct SQL routes are unmounted in production unless enabled and are never forwarded; metrics and diagnostics need an operator token; the backend port is unpublished in Compose.
+- **Providers and tracing.** Selection is explicit with no fallback; removed or unknown settings stop startup; provider errors are classified and never echo provider text; result rows are never sent to a model; optional LangSmith tracing sends only allowlisted metadata.
+- **Secrets.** `*_FILE` variants, value-free startup errors, no secrets in logs, responses, the frontend bundle or traces (checked in the Sprint 15 closeout).
 
-Known security limitations: there is no tenant-level authorization layer, no cost-based planner or EXPLAIN budget, and AST validation is defense in depth rather than a complete guarantee. Future work may add database views, network isolation, stricter tenant policies, and query-cost controls. Do not weaken the existing validator or database role to make a generated query work.
+Known security limitations: nothing in this repository issues production tokens; AST validation is defense in depth rather than a complete guarantee (the views, role and read-only transaction are the hard boundary); a stolen JWT is valid until it expires; outside production, a `QUERY_GENERATION_FAILED` response carries a `debug` block with the failed SQL and a database error summary, which the dashboard shows and production never includes. Do not weaken the validator, the views or the role to make a generated query work.
 
 ## 9. Database
 
-PostgreSQL is created by `docker-compose.yml`. Alembic owns schema creation; do not replace migrations with `Base.metadata.create_all()` in application startup.
+PostgreSQL is created by `docker-compose.yml`. Alembic owns schema creation; do not replace migrations with `Base.metadata.create_all()` in application startup. In Compose the one-shot `migrate` service runs `alembic upgrade head` and the backend waits for it.
 
-The initial revision is `9a999e64b310_create_initial_analytics_schema.py`. The schema has foreign keys, status/value/date checks, unique identifiers, and analytics-oriented indexes on foreign keys, time fields, statuses, and tenant/time combinations.
+Migrations: `9a999e64b310` (initial analytics schema), `b7c2d41f8a10` (the `analytics` schema of tenant-scoped, PII-free views and `analytics.row_visible()`), `c3d91e5a7b20` (operational tables: `conversations`, `conversation_turns`, `audit_log`, on their own base so they can never enter the analytics allowlist). Upgrade, downgrade to the first revision, and re-upgrade were run in the closeout.
 
-The deterministic seed in `backend/app/db/seed.py` uses seed `20260923`, covers 2024–2025, and is protected by `seed_runs`:
+The deterministic seed in `backend/app/db/seed.py` (seed `20260923`, 2024-2025, protected by `seed_runs`, refuses to run in production, and runs `ANALYZE` so the cost pre-flight sees real row counts) creates: 100 customers, 354 users, 1,000 vehicles, 500 drivers, 50,000 trips, 20,000 vehicle locations, 20,000 fuel records, 10,000 maintenance records, 10,000 invoices, 20,000 payments, 100 subscriptions.
 
-- 100 customers
-- 354 users in the verified run
-- 1,000 vehicles
-- 500 drivers
-- 50,000 trips
-- 20,000 vehicle locations
-- 20,000 fuel records
-- 10,000 maintenance records
-- 10,000 invoices
-- 20,000 payments
-- 100 subscriptions
-
-The `app` role owns/migrates the schema. `analytics_readonly` receives database connection, schema usage, and SELECT privileges only. `database/verify-readonly.sql` checks SELECT and rejects write/schema privileges; `make verify-permissions` runs it inside Compose. The analytics service must always use `ANALYTICS_DATABASE_URL`, never the application owner URL.
+The `app` role owns and migrates the schema. `analytics_readonly` can connect and SELECT from the `analytics` views only. `database/verify-readonly.sql` checks this (`make verify-permissions` runs it inside Compose; it reports "analytics_readonly permissions verified"). The analytics service always uses `ANALYTICS_DATABASE_URL`, never the owner URL.
 
 ## 10. Result Intelligence
 
@@ -282,140 +255,113 @@ Sprint 6 runs after successful SQL execution:
 - Axis fields are validated against returned columns and empty data always falls back to table.
 - Values remain machine-readable: Decimal becomes a JSON number, temporal values become ISO strings, UUIDs become strings, and NULL stays NULL.
 - Empty results return a no-records summary and warning rather than an error. High NULL fractions produce warnings.
-- `ResultSummaryService` produces deterministic grounded summaries from returned data only. `ENABLE_RESULT_SUMMARY=false` disables them. A Gemini summary callback exists as an isolated extension point, but the default dependency wiring currently uses deterministic summaries and does not make an extra Gemini call.
+- `ResultSummaryService` produces deterministic grounded summaries from returned data only. `ENABLE_RESULT_SUMMARY=false` disables them. No model is called to write summaries.
 
 ## 11. API Surface
 
-All routes are under `/api/v1` unless noted.
+All routes are under `/api/v1` unless noted. Analytics and schema routes require a bearer token unless `AUTH_MODE=disabled` (development only).
 
 | Method | Route | Purpose |
 |---|---|---|
-| GET | `/health` | Dependency-free liveness probe. |
-| GET | `/health/ready` | Checks application DB, analytics DB, and selected provider configuration. |
-| GET | `/api/v1/health` | Checks application database connectivity. |
-| GET | `/api/v1/health/ready` | Versioned readiness alias. |
-| GET | `/api/v1/metrics` | Process-local counters and latency averages; restrict at the network boundary. |
-| POST | `/api/v1/analytics/query` | Validates and executes direct read-only SQL. Request: `{ "sql": "..." }`. Response: columns, rows, row count, execution time. |
-| POST | `/api/v1/analytics/validate` | Returns normalized SQL, errors, warnings, referenced tables, and complexity metadata without executing. |
-| POST | `/api/v1/analytics/generate` | Converts `{ "question": "..." }` into structured SQL without execution. Returns question, SQL, explanation, tables, schema context, provider, and confidence. |
-| POST | `/api/v1/analytics/ask` | Generates SQL, validates/executes it, and returns SQL results plus summary, KPI, visualization, and warnings. |
-| GET | `/api/v1/schema` | Returns all non-secret schema metadata. |
-| GET | `/api/v1/schema/tables` | Lists available analytics table names. |
-| GET | `/api/v1/schema/tables/{table_name}` | Returns one table's columns and relationships. |
-| GET | `/docs` | FastAPI interactive OpenAPI documentation. |
+| GET | `/health` | Dependency-free liveness probe (also under `/api/v1`). |
+| GET | `/health/ready` | Readiness: 503 if a required database is down; 200 `{"status": "degraded", "degraded": ["llm_provider"]}` if only the provider is unconfigured. Never calls the provider. (Also `/api/v1/health/ready`.) |
+| GET | `/api/v1/health/diagnostics` | Operator-only: dependency latency, pools, migration revision, enabled features, provider and model. Needs `METRICS_TOKEN`. |
+| GET | `/api/v1/metrics` | JSON counter snapshot. Needs `METRICS_TOKEN` when set; 404 in production when unset. |
+| GET | `/api/v1/metrics/prometheus` | Prometheus exposition (same protection). |
+| POST | `/api/v1/analytics/ask` | Generate SQL, validate, execute, and return rows plus summary, KPI, visualization, warnings and `request_id`. |
+| POST | `/api/v1/analytics/generate` | Question to structured SQL without execution. |
+| POST | `/api/v1/analytics/query` | Direct read-only SQL. **Mounted only outside production or with `ENABLE_DIRECT_SQL_ENDPOINTS`; never forwarded by the frontend proxy.** |
+| POST | `/api/v1/analytics/validate` | Validate without executing. Same mounting rule as `query`. |
+| POST / GET / DELETE | `/api/v1/analytics/conversations`, `/{id}`, `POST /{id}/turns` | Create, read, delete and append to an owner-scoped conversation. |
+| POST | `/api/v1/analytics/feedback` | Record a helpful / not-helpful rating for a request id. |
+| GET | `/api/v1/schema`, `/schema/tables`, `/schema/tables/{table_name}`, `/schema/business-definitions` | Schema metadata (PII-free), business definitions and example questions. |
+| GET | `/docs`, `/openapi.json` | Interactive docs; disabled in production. |
 
-Structured errors use `{ "error": { "code": "...", "message": "...", "request_id": "..." } }`. Codes include validation, parse, security, permission, timeout, table-not-found, provider, invalid-request, request-too-large, and rate-limit errors.
+Errors use `{ "error": { "code": "...", "message": "...", "request_id": "..." } }`. Codes include validation, parse, security, permission, timeout, cost, table-not-found, generation-failed, the model codes in `docs/llm-providers.md`, invalid-request, request-too-large, deadline, unauthenticated/forbidden, and rate-limit errors.
 
 ## 12. Repository Structure
 
 ```text
 ai-sql-analytics-copilot/
 ├── backend/
-│   ├── alembic.ini
-│   ├── alembic/
-│   │   ├── env.py
-│   │   └── versions/9a999e64b310_create_initial_analytics_schema.py
 │   ├── app/
-│   │   ├── analytics/       # query execution, AST validation, normalization
-│   │   ├── api/             # FastAPI route modules
-│   │   ├── core/            # settings, metrics, middleware, telemetry, logging
-│   │   ├── db/              # engines, ORM base, seed, schema metadata
-│   │   ├── llm/             # provider interface, Gemini, mock, parser, prompts
-│   │   ├── models/           # SQLAlchemy entities
-│   │   ├── schemas/          # Pydantic API contracts
-│   │   ├── services/         # retrieval, generation, result intelligence
+│   │   ├── analytics/       # AST validator, read-only executor, normalization
+│   │   ├── api/             # FastAPI routes: analytics, generation, conversations, feedback, schema, health
+│   │   ├── conversation/    # context store: in-memory and PostgreSQL
+│   │   ├── core/            # settings, auth, rate limit, metrics, audit, deadline, telemetry, logging, llm_tracing
+│   │   ├── db/              # engines, models base, seed, schema metadata, analytics views, operational tables
+│   │   ├── jobs/            # retention purge
+│   │   ├── llm/             # factory, LangChain provider, errors, mock provider, prompt, parser, protocol
+│   │   ├── models/          # SQLAlchemy entities
+│   │   ├── schemas/         # Pydantic API contracts
+│   │   ├── services/        # retrieval, generation, result intelligence
 │   │   └── main.py
-│   ├── tests/               # API, database, Gemini, security, result tests
+│   ├── alembic/versions/    # three migrations
+│   ├── evals/               # golden dataset, runner, scoring, thresholds
+│   ├── scripts/             # check_coverage.py, issue_token.py, llm_smoke.py
+│   ├── tests/               # 29 test modules (unit, security, provider, wire-level, tracing, integration)
 │   ├── Dockerfile
 │   └── pyproject.toml
-├── database/
-│   ├── init/01-analytics-role.sql
-│   └── verify-readonly.sql
-├── docs/
-│   ├── architecture.md
-│   ├── business-definitions.md
-│   ├── database-schema.md
-│   ├── deployment.md
-│   ├── production-security-review.md
-│   ├── security.md
-│   └── visualization.md
-├── .github/workflows/ci.yml
-├── frontend/                # Next.js dashboard and tests
-├── .env.example
-├── docker-compose.yml
-├── Makefile
-├── README.md
-└── progress.md
+├── frontend/                # Next.js dashboard, proxy config, contract, tests
+├── database/                # init/01-analytics-role.sql, verify-readonly.sql
+├── docs/                    # see docs/README.md for the index
+├── ops/                     # Prometheus alerts and SLO rules, Grafana dashboard
+├── scripts/                 # smoke_test.py, backup/restore scripts
+├── loadtest/                # k6 script
+├── .github/workflows/       # ci.yml, nightly.yml, loadtest.yml (+ dependabot.yml)
+├── docker-compose.yml       # + docker-compose.dev.yml, docker-compose.loadtest.yml
+├── .env.example  Makefile  README.md  progress.md
+└── sprints.md  final_sprints.md   # historical plans; see section 25
 ```
 
 ## 13. Environment Variables
 
-Values below are documented formats only. Real values belong in ignored `.env`, never in this file or Git.
+`docs/deployment.md` is the complete, setting-by-setting reference (a closeout check confirmed every setting in `Settings` appears in the documentation). The ones that matter most:
 
-| Variable | Required | Purpose / example |
-|---|---|---|
-| `APP_ENV` | No; default `development` | `development`, `test`, or `production`; production rejects SQLite and mock mode. |
-| `DEBUG` | No; default `false` | Framework debug; always effectively disabled in production. |
-| `CORS_ALLOWED_ORIGINS` | No; default `[]` | JSON array of exact origins; credentials are not enabled. |
-| `DATABASE_URL` | Runtime/app DB | Migration and owner connection; production must use PostgreSQL. |
-| `ANALYTICS_DATABASE_URL` | Analytics execution | Restricted read-only PostgreSQL connection, separate from the owner URL. |
-| `POSTGRES_PASSWORD` | Fresh Compose database | Owner role password; supply at runtime only. |
-| `ANALYTICS_DATABASE_PASSWORD` | Fresh Compose database | Distinct read-only role password; supply at runtime only. |
-| `GEMINI_API_KEY` | Only when `LLM_PROVIDER=gemini` | Google Gemini credential; never print or commit it. |
-| `LLM_PROVIDER` | No; default `mock` | `mock`, `gemini` or `ollama`; mock is disabled in production. Replaces `LLM_MODE`, which now stops startup. |
-| `LLM_MODEL` | Gemini: no (default `gemini-3.6-flash`); Ollama: yes | Model id. Replaces `GEMINI_MODEL`, which now stops startup. |
-| `OLLAMA_BASE_URL` | No | Default `http://127.0.0.1:11434` (`host.docker.internal` in Compose). |
-| `LLM_MAX_RETRIES` | No; default `1` | Extra attempts after a transient provider failure. |
-| `LOG_LEVEL` | No; default `INFO` | Structured application log threshold. |
-| `LLM_TIMEOUT_SECONDS` | No; default `30` | Provider timeout; transient Gemini 5xx retries are bounded. |
-| `DATABASE_POOL_SIZE` | No; default `5` | SQLAlchemy pool size per engine. |
-| `DATABASE_MAX_OVERFLOW` | No; default `10` | Connections above pool size. |
-| `DATABASE_POOL_TIMEOUT_SECONDS` | No; default `5` | Pool checkout timeout. |
-| `DATABASE_POOL_RECYCLE_SECONDS` | No; default `1800` | Connection recycle interval. |
-| `DATABASE_CONNECT_TIMEOUT_SECONDS` | No; default `5` | PostgreSQL connect timeout. |
-| `MAX_RESULT_ROWS` | No; default `1000` | Maximum rows fetched/returned by analytics execution. |
-| `QUERY_TIMEOUT_SECONDS` | No; default `10` | PostgreSQL statement timeout. |
-| `MAX_QUERY_JOINS` | No; default `5` | AST complexity threshold. |
-| `MAX_QUERY_NESTING` | No; default `3` | AST nesting threshold. |
-| `MAX_REPAIR_RETRIES` | No; default `3` | Maximum repair attempts for repairable query errors. |
-| `ENABLE_RESULT_SUMMARY` | No; default `true` | Enables deterministic post-query summaries. |
-| `MAX_QUESTION_LENGTH` | No; default `2000` | Maximum natural-language question length. |
-| `MAX_CONVERSATION_CONTEXT_CHARS` | No; default `2000` | Maximum caller context or conversation turn length. |
-| `MAX_REQUEST_BODY_BYTES` | No; default `16384` | Maximum fully buffered request body; capped at 1 MiB. |
-| `RATE_LIMIT_ENABLED` | No; default `true` | Enable in-process sliding-window limits. |
-| `RATE_LIMIT_REQUESTS` | No; default `30` | Requests allowed per endpoint/client window. |
-| `RATE_LIMIT_WINDOW_SECONDS` | No; default `60` | Sliding window duration. |
+| Variable | Notes |
+|---|---|
+| `APP_ENV` | `development` (default), `test`, `production`. Production requires PostgreSQL, JWT auth and a real provider, and disables docs, debug blocks and the mock. |
+| `DATABASE_URL`, `ANALYTICS_DATABASE_URL` | Owner and read-only connections; never the same role. |
+| `POSTGRES_PASSWORD`, `ANALYTICS_DATABASE_PASSWORD` | Required by Compose; distinct. |
+| `LLM_PROVIDER`, `LLM_MODEL` | `mock` (default), `gemini`, `ollama`; model id (Ollama requires it). `LLM_MODE` and `GEMINI_MODEL` no longer exist and stop startup. |
+| `GEMINI_API_KEY`, `OLLAMA_BASE_URL` | Key for Gemini (secret; `_FILE` works); Ollama address (default `http://127.0.0.1:11434`, `host.docker.internal` in Compose). |
+| `LLM_TIMEOUT_SECONDS`, `LLM_MAX_RETRIES`, `MAX_REPAIR_RETRIES`, `REQUEST_DEADLINE_SECONDS` | The single timeout, retry and deadline policy. |
+| `AUTH_MODE`, `JWT_*` | `jwt` or `disabled`; issuer, audience and key settings. |
+| `ENABLE_DIRECT_SQL_ENDPOINTS`, `METRICS_TOKEN` | Exposed-surface switches. |
+| `CONVERSATION_STORE`, `AUDIT_SINK`, `*_TTL/RETENTION_DAYS` | `memory` or `postgres`; `log`, `database` or `both`. |
+| `RATE_LIMIT_*`, `QUERY_TIMEOUT_SECONDS`, `QUERY_COST_LIMIT`, `MAX_RESULT_ROWS`, `MAX_QUERY_*` | Limits. |
+| `LANGSMITH_TRACING`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT`, `LANGSMITH_ENDPOINT` | Optional tracing, off by default. |
+| `RUN_LIVE_LLM_TESTS` | Test-time switch for the opt-in live provider tests. |
 
-The legacy OpenAI provider and its `OPENAI_API_KEY` / `OPENAI_MODEL` settings were removed; Gemini and the deterministic mock are the only providers.
+Values belong in an ignored `.env` or a secret store, never in this file or Git.
 
 ## 14. Testing
 
-Tests live in `backend/tests` and use pytest. They cover:
+Backend tests are in `backend/tests` (pytest, 29 modules); frontend tests in `frontend/` (Vitest). Areas covered:
 
-- FastAPI health, query, schema, generation, and `/ask` behavior.
-- Configuration and database relationships/constraints.
-- Deterministic seed generation and expected volumes.
-- Gemini provider behavior with a mocked SDK client; no Gemini network call is required for tests.
-- AST security: allowed queries, CTEs, joins, aggregates, DML/DDL rejection, system tables, dangerous functions, unknown identifiers, complexity, limits, prompt injection, and repair security.
-- Result intelligence: KPI formats, line/bar/pie/table selection, visualization validation, formatting, empty results, warnings, grounded summaries, and summary failure fallback.
-- PostgreSQL read-only permissions via a marked integration test when a PostgreSQL analytics URL is configured.
-- Production settings/secrets, CORS middleware configuration, request/body/context limits, rate limiting, health/readiness, error sanitization, pool/outage/timeouts, and metrics.
-- Gemini timeout/rate-limit/5xx/model-unavailable/malformed responses and bounded retry configuration.
-- Six-query SQLite-backed analytics smoke coverage with SQL execution and total API latency recorded as test properties.
+- API, configuration, database constraints, deterministic seed, health and readiness, error sanitization.
+- Authentication, per-principal limits, owner-scoped conversations, proxy route allowlist and headers.
+- SQL safety: allowed and forbidden queries, function and table allowlists, PII columns, LIMIT enforcement, comments stripped, empty `SELECT`s rejected, repair security, and a seeded fuzz suite (default size in CI, 20,000 iterations nightly).
+- Provider boundary: factory selection and configuration failures, structured parsing, error classification, one retry policy, wire-level tests of the real Gemini and Ollama clients against local servers (including counting HTTP requests), and no-network proof.
+- Tracing: sanitization, end-to-end non-leakage, the real LangSmith client against a local server, outage and circuit-breaker behaviour, process-exit time.
+- Security invariants across providers: the model layer cannot reach the database, the SQL layer does not depend on LangChain, forbidden SQL never opens a connection for any provider, secrets and provider text do not reach responses or logs.
+- PostgreSQL integration (marked `integration`): read-only privileges, tenant isolation through joins, CTEs, subqueries and unions, durable conversations, cost pre-flight, migrations. With `REQUIRE_INTEGRATION=1` a missing database fails instead of skipping.
+- Evaluation: scoring, comparison, summary and report logic, and the dataset itself.
+- Opt-in live provider tests (`live`, skipped unless `RUN_LIVE_LLM_TESTS=1`).
 
-Frontend tests live in `frontend/lib/api.test.ts` and `frontend/components/analytics/analytics-dashboard.test.tsx`; they cover API failure codes, network/timeout/malformed responses, invalid visualization metadata, empty results, conversation failures, retries, and duplicate submissions. Frontend checks are `npm test`, `npm run lint`, and `npm run build` from `frontend/`.
-
-Run the standard checks from the repository root:
+Commands (from the repository root unless noted):
 
 ```bash
-make test
-make lint
+make lint typecheck test coverage fuzz        # backend; `make coverage` also runs the per-package gates
+cd backend && python -m pytest -m integration # needs migrated, seeded PostgreSQL (see ci.yml for the setup)
+cd frontend && npm ci && npm run lint && npm test -- --run && npm run build
 ```
 
-An earlier Sprint 9 run reported `98 passed, 1 skipped`; the skip is the PostgreSQL-only permission test without its integration configuration. It is superseded by the latest full rerun above. Backend Ruff passed. Tests use mocked providers and do not require Gemini credentials.
-Latest rerun, superseding the earlier 98-pass run below: backend `99 passed, 1 skipped` (PostgreSQL permission integration not configured); frontend `11 passed`, with lint and production build passing.
+Closeout results are in section 25. Earlier counts quoted in sprint summaries are historical.
 
 ## 15. Completed Sprint Summary
+
+Historical record, written as each sprint finished. Later work superseded parts of it: Sprint 9's process-local conversations and Gemini SDK calls, Sprint 11's default model, and several Sprint 12 components (see section 2 and `docs/Sequence.md`). The current state is in the other sections.
 
 ### Sprint 1 — Foundation
 
@@ -463,7 +409,7 @@ Latest rerun, superseding the earlier 98-pass run below: backend `99 passed, 1 s
 
 - **Objective:** provide a usable conversational interface for backend analytics responses.
 - **Implementation:** modular Next.js dashboard, typed API client, same-origin API proxy, KPI/chart/table/SQL result views, local conversation switching, responsive layout, frontend tests, standalone Docker image, and Compose integration.
-- **Verification:** frontend tests and lint pass; Next.js production build and frontend Docker image build pass; full Compose stack started and `/api/v1/analytics/ask` smoke-tested through the frontend proxy. The current local demo uses a transient `LLM_MODE=mock` override; `.env` was not changed.
+- **Verification:** frontend tests and lint pass; Next.js production build and frontend Docker image build pass; full Compose stack started and `/api/v1/analytics/ask` smoke-tested through the frontend proxy. (At the time the demo used a mock-mode override; the setting has since been renamed `LLM_PROVIDER`.)
 - **Significance:** completes the user-facing analytics workflow without moving business or SQL security rules into the browser.
 
 ### Sprint 9 — Production Hardening, Observability, and Deployment
@@ -482,7 +428,7 @@ Latest rerun, superseding the earlier 98-pass run below: backend `99 passed, 1 s
 
 ### Sprint 11 — Security Hardening and Correctness
 
-Implemented from `sprints.md` (S11-01 to S11-22); nothing was executed when it was written, so run `make test`, `make lint`, the frontend suite, and the PostgreSQL integration tests first.
+Implemented from `sprints.md` (S11-01 to S11-22). It was first executed in the stabilization pass (section 22).
 
 - **Surface:** `frontend/next.config.ts` proxies an explicit route list only; `/query` and `/validate` are unmounted in production unless `ENABLE_DIRECT_SQL_ENDPOINTS`; `/metrics` needs `METRICS_TOKEN`; Compose publishes no backend port (`docker-compose.dev.yml` does, locally); Next.js sends CSP/frame/HSTS headers.
 - **Auth and limits:** `app/core/auth.py` (JWT / static / disabled; production requires JWT), `app/core/rate_limit.py` (per-principal route dependency, stricter LLM limit), owner-scoped conversations with user-only turns, TTL and caps.
@@ -494,103 +440,87 @@ Implemented from `sprints.md` (S11-01 to S11-22); nothing was executed when it w
 
 ## 16. Known Limitations
 
-- **Conversation persistence is in-memory:** sessions are not durable across backend restarts and are not backed by user identity.
-- **Frontend conversation history is client state:** no account-level saved history or reload persistence is implemented.
-- **Rate limiting and metrics are process-local:** use a shared gateway/metrics backend before running multiple application replicas.
-- **Gemini readiness checks configuration, not remote quota/availability:** provider outages are surfaced safely when requests execute.
-- **PostgreSQL init passwords apply only to fresh clusters:** existing roles require explicit password rotation and URL updates.
-- **Compose targets local development:** the backend is no longer published, but production still needs private networking, a trusted TLS gateway, and a secret manager (`JWT_SECRET` and keys are plain environment variables).
-- **No identity provider:** the API validates signed tokens and scopes queries to the token's customer, but nothing issues tokens in production (`backend/scripts/issue_token.py` is a development helper).
-- **No cost-based query planner:** query controls use AST heuristics, join/nesting limits, result limits, and timeouts; they do not estimate database cost.
-- **AST validator is defense in depth:** SQLGlot validation is stronger than regex but cannot be the sole security mechanism.
-- **Deterministic summaries are the default:** Gemini summary generation is an extension point, not active default behavior, to avoid an unnecessary extra provider call.
-- **Gemini availability is external:** a valid key/model can still receive provider-side capacity errors such as 503; API errors are handled without executing SQL.
-- **Schema retrieval is keyword-ordered:** the full schema is sent by default (11 tables); narrowed keyword retrieval remains for larger schemas. No embeddings or vector store exist.
-- **No cloud deployment or external observability platform:** deployment is documented for Docker Compose; logs/metrics are local to the application process.
+- **No identity provider.** The API validates signed tokens and scopes queries to the token's customer, but nothing in this repository issues production tokens (`backend/scripts/issue_token.py` is a development helper). A stolen token is valid until it expires; there is no revocation list.
+- **Single instance.** Rate limiting and the JSON metrics are process-local, so several replicas would each enforce their own limit. Conversations are durable with `CONVERSATION_STORE=postgres`.
+- **Development error detail.** Outside production a `QUERY_GENERATION_FAILED` response includes a `debug` block (failed SQL and a database error summary), by design for the dashboard. Do not run a non-production environment with untrusted users.
+- **Readiness does not call the model provider.** An unreachable Ollama or a Gemini outage shows in request errors and metrics, not in readiness; `backend/scripts/llm_smoke.py` checks a provider end to end.
+- **Model behaviour is external.** Gemini model ids retire (the previous default now returns 404 for new users), capacity and quota errors occur, and Gemini 3 models ignore `temperature`, so real-model results vary between runs. Only the mock is deterministic.
+- **Live checks not run in this environment.** Inference with a real Ollama model, a live Gemini evaluation on the final code, and live LangSmith were not run (section 25). No Gemini or Ollama evaluation baseline or threshold exists yet.
+- **AST validation is defense in depth.** The tenant views, the read-only role and transaction, and the limits are the hard boundary.
+- **Tracing shares metadata.** When enabled, request ids and timings go to LangSmith (see `docs/security.md`).
+- **PostgreSQL init passwords apply only to fresh clusters.** Existing roles need explicit rotation and URL updates.
+- **Compose is a single-host setup.** Production needs private networking, a TLS gateway, and a secret manager.
+- **No backend lockfile.** `requirements.lock` does not exist (`make lock` was not run); dependency ranges are in `pyproject.toml` and `pip-audit` was clean at closeout.
+- **CI has not run on GitHub in the recorded verification.** The workflow files parse and every command they run was exercised locally on Windows; the first run on a Linux runner is the remaining confirmation. The k6 load test and Trivy image scans were not run.
+- **Schema retrieval is keyword-ordered.** The full schema is sent by default (11 tables); no embeddings or vector store exist.
+- **Deterministic summaries.** No model writes summaries.
 
-## 17. Future Improvements
+## 17. Out of Scope
 
-Sprints 1–11 are implemented; Sprint 12 is planned in `sprints.md`. Remaining improvements:
+Deliberately not part of this project, and not planned:
 
-- Integrate an identity provider that issues the expected token claims.
-- Persist conversation history with per-user ownership, retention, and deletion controls.
-- Use a shared rate limiter and metrics aggregation if deploying multiple backend instances.
-- Add external log/metric collection and deployment-specific alerting.
-- Evaluate query-cost controls, stricter schema/views, or embeddings only when supported by measured needs.
-- Deploy behind a trusted TLS gateway with private database and metrics access.
+- An identity provider integration or token issuing.
+- Multi-replica scale-out (a shared rate limiter and metrics aggregation).
+- Embeddings or a vector database for schema retrieval.
+- Automatic fallback between model providers (excluded on purpose: it could send data somewhere the operator did not choose).
+- Cloud deployment automation or a managed observability platform.
+- Agentic tool loops (LangGraph) or fine-tuning.
+
+Each of these would be a new requirement, not unfinished work.
 
 ## 18. How to Resume Development
 
 ```text
-Current stopping point:
-Sprints 1–10 are complete.
+The project is closed. Sprints 1-15 are complete; section 25 is the closeout record.
 
-Next task:
-No sprint is currently in progress. Only start new work when explicitly requested.
-
-Do not redo Sprints 1–10.
-
-First:
-1. Read progress.md.
-2. Inspect the current repository and Git state.
-3. Verify the current backend/frontend tests and Docker health status.
-4. Understand the existing UI, provider, retrieval, validation, execution, and result-intelligence boundaries.
-5. Confirm the requested scope before making future improvements.
-6. Preserve existing APIs and SQL security boundaries unless explicitly required.
-7. Run relevant tests and the complete suite where practical.
-8. Update progress.md after completing the sprint.
+If work is requested:
+1. Read this file, README.md, docs/README.md and docs/llm-providers.md.
+2. Check `git status` and `git log`; the repository and its tests are the source of truth.
+3. Run the checks listed in section 14 before changing anything, and record what you ran.
+4. Preserve the SQL safety boundary and the explicit-provider, no-fallback rule.
+5. Update this file with evidence; never mark work complete without it.
 ```
-
-There is no active sprint handoff. Treat the repository as the source of truth and do not infer new scope from the optional future improvements list.
 
 ## 19. Instructions for Future AI Agents
 
-- Read `progress.md` before modifying the project.
-- Treat the repository and tests as the source of truth.
-- Inspect existing code before implementing anything.
-- Do not rewrite working architecture unnecessarily.
-- Do not duplicate existing functionality.
-- Never bypass SQLGlot validation or the read-only analytics service.
-- Never allow LLM output to execute without the existing security pipeline.
-- Never trust LLM confidence, table metadata, summaries, or visualization metadata as security controls.
-- Never commit `.env`, API keys, passwords, tokens, or database credentials.
-- Do not print secrets while debugging configuration.
-- Maintain the `LLMProvider` abstraction and preserve deterministic mock mode.
-- Keep Gemini/network calls optional in tests; use mocked clients.
-- Preserve the separate `DATABASE_URL` and `ANALYTICS_DATABASE_URL` roles.
-- Keep migrations as the schema authority; do not replace them with application startup `create_all()`.
+- Read `progress.md` before modifying the project, and treat the repository and tests as the source of truth.
+- Inspect existing code before implementing anything. Do not rewrite working architecture or duplicate functionality.
+- Never bypass SQLGlot validation, the tenant views, or the read-only analytics service. Never let model output execute outside that pipeline.
+- Never trust model confidence, explanations, summaries, or visualization metadata as security controls. Keep LangChain and LangSmith out of every security decision.
+- Never add automatic fallback between providers.
+- Never commit `.env`, keys, passwords, tokens, or database credentials, and do not print secrets while debugging.
+- Keep the `LLMProvider` protocol and the deterministic mock. Keep all live calls (Gemini, Ollama, LangSmith) optional in tests.
+- Preserve the separate `DATABASE_URL` and `ANALYTICS_DATABASE_URL` roles, and keep migrations as the schema authority.
 - Keep result intelligence independent of frontend code.
-- Add focused tests for new functionality and retain regression coverage.
-- Do not mark a sprint complete unless its acceptance criteria are actually verified.
-- Do not implement future sprint functionality early unless explicitly requested.
-- Prefer small, maintainable changes over unnecessary rewrites.
-- Update `progress.md` after completing a sprint.
+- Add focused tests for new behaviour and keep regression coverage; report checks that were not run as not run.
+- Do not mark work complete unless its acceptance criteria were verified, and update this file after finishing.
 - Do not commit changes unless explicitly instructed.
 
 ## 20. Important Development Decisions
 
-- **Gemini plus provider abstraction:** Gemini is the current configured real provider, but the API depends on `LLMProvider` so provider changes do not affect routes or security.
-- **Mock mode:** deterministic mock SQL keeps local development, CI, and demos independent of API availability.
-- **Independent SQL validation:** the LLM is untrusted; SQLGlot, allowlists, limits, and PostgreSQL privileges enforce safety outside the model.
-- **Separate database roles:** migrations/application code use the owner URL while generated SQL uses `analytics_readonly`.
-- **Repair revalidation:** a repaired query follows exactly the same validator and executor path; security errors are never automatically repaired.
-- **Deterministic schema retrieval:** keyword retrieval is predictable and easy to test; embeddings are deferred until they solve a demonstrated need.
-- **Deterministic visualization:** result shape is sufficient for initial chart selection, avoiding an unnecessary Gemini call and keeping chart metadata testable.
-- **Summary isolation:** summaries run after execution and receive result data only; they cannot influence SQL generation or query execution.
-- **Frontend separation:** the backend owns data interpretation and visualization contracts; the implemented frontend remains a consumer, not a security or analytics engine.
-- **Migration-owned database:** Alembic provides reproducible schema creation and the seed marker prevents uncontrolled duplicates.
+- **One model boundary, no fallback.** The API depends on the `LLMProvider` protocol and a single factory; LangChain is used only to call the model. A failing provider is an error, never a silent switch.
+- **Mock mode.** Deterministic offline SQL keeps development, CI and demos independent of any service.
+- **Independent SQL validation.** The model is untrusted; SQLGlot, allowlists, the tenant views, the read-only role and limits enforce safety outside it, and the two layers do not import each other.
+- **Separate database roles.** Migrations and application code use the owner URL; generated SQL uses `analytics_readonly` against views.
+- **Repair revalidation.** A repaired query takes exactly the same validator and executor path; security errors are never repaired.
+- **Single instance.** Simplicity over scale-out; the removed components are recorded in `docs/Sequence.md`.
+- **Tracing is optional and sanitized.** Empty inputs, an allowlist, a bounded queue, and no effect on a request.
+- **Honest evaluation.** Coverage is reported separately from accuracy; provider failures and declines are never counted as passes or as safety rejections.
+- **Deterministic retrieval and visualization.** Predictable and testable; embeddings and model-chosen charts were not needed.
+- **Migration-owned database.** Alembic creates the schema; the seed is idempotent and refuses to run in production.
 
 ## 21. Current Git State
 
-- **Branch:** `main`
-- **Baseline for the stabilization pass:** `6ea3d59` (clean tree). Earlier milestones: Sprint 11 `abd5ac3`, Sprint 12 `23e1de5` (`e869768` is an identical-tree duplicate), merge `17dba09`, `440e7b9`.
-- **Stabilization changes:** commit `fix: stabilize analytics copilot baseline` on top of `6ea3d59` (details in section 22).
-- **Older reference points:** Sprint 9 `e1291e4`, Sprint 8 `5639dd7`, Sprint 7 `9554013`, Sprint 6 `d685fef`.
+- **Branch:** `main`.
+- **Sprint 15 baseline:** `b1e07c2` (Sprint 14, committed by the owner) with a clean tree.
+- **Earlier milestones:** Sprint 13 `19213a2`; e2e removal `622a59e`; validator fixes `3bd332a`; simplification `412752b` and `d4ff27a`; stabilization `08317e3`; Sprint 12 `23e1de5` (`e869768` is an identical-tree duplicate); Sprint 11 `abd5ac3`; Sprint 9 `e1291e4`.
+- **Sprint 15 changes are uncommitted** in the working tree, by instruction. The final checkpoint is recorded in section 25.
 
 No secrets, API keys, passwords, or token values belong in this file.
 
+## Sprint 12: reliability, quality gates, operations (historical; parts since removed)
 
-## Sprint 12: reliability, quality gates, operations (implemented; core verified in section 22)
+> Historical record. The Redis limiter, SQL cache, OpenTelemetry tracing, Kubernetes manifest and release pipeline described below were later removed (section 2 and `docs/Sequence.md` section 18). Everything else still stands.
 
 Written without running anything; the stabilization pass in section 22 later executed the backend, frontend, PostgreSQL/Redis integration and Docker Compose paths. Items that still need a real environment are listed there under "Not run".
 
@@ -804,3 +734,108 @@ Added `analytics_llm_retries_total{provider}`. Existing metrics already cover pr
 - Gemini 3 ignores `temperature`; real-model results are not deterministic.
 
 **Exit gate:** configuration switches among mock, Gemini and Ollama (mock and Ollama exercised in Docker here, Gemini in Sprint 13); tracing cannot break a core request (shown with a dead, slow and failing endpoint); and honest evaluation reports exist, with the live ones recorded as blocked or not run.
+
+
+## 25. Sprint 15: final hardening and closeout
+
+Sprint 15 added no features. It verified the whole system, wrote the missing security-invariant tests, reconciled the documents with the code, and recorded the final state.
+
+### Baseline and final state
+
+- Branch `main`, HEAD `b1e07c2` (Sprint 14). The tree was clean when Sprint 15 started.
+- Sprint 15 changes are **uncommitted** by the owner's instruction: `.env.example`, `README.md`, `docs/README.md`, `docs/architecture.md`, `docs/deployment.md`, `docs/operations.md`, `final_sprints.md`, `progress.md`, and the new `backend/tests/test_security_invariants.py`. The checkpoint exists when the owner commits these.
+- No application code changed in Sprint 15. The only code-adjacent addition is the invariants test file.
+
+### 15.1 Verification record (final tree)
+
+| Check | Result |
+|---|---|
+| `ruff check`, `ruff format --check`, `mypy` (65 source files) | Clean |
+| Backend unit suite (`-m "not integration"`) | 497 passed, 2 skipped (the live-provider tests, which need a key) |
+| Same suite in a brand-new virtual environment | 497 passed, 2 skipped; `pip check` clean |
+| Coverage gates (analytics, services, llm) | 94.7%, 95.8%, 96.6% |
+| PostgreSQL integration tests (`REQUIRE_INTEGRATION=1`) | 43 passed |
+| Migration round trip, read-only role privilege check | Down 2 / up 2; verified |
+| Evaluation reference check | 76 cases, 0 problems |
+| Mock evaluation subset | Exit 0 |
+| Validator fuzz at the nightly size (20,000) | 17 passed |
+| `pip-audit` as CI runs it | No known vulnerabilities |
+| Frontend lint, 122 tests, build, `tsc` | Passed |
+| `npm audit`, `npm ci --dry-run` | 0 vulnerabilities; exit 0 |
+| Backend contract test | 12 passed |
+| Workflow, Compose and Prometheus YAML (10 files) | Parse |
+| `docker compose config` (base, dev, loadtest) | Valid |
+| Markdown link check (30 files) | 0 broken |
+| Settings completeness (every `Settings` alias documented) | Complete |
+
+### 15.2 Security invariants and their evidence
+
+| # | Invariant | Evidence |
+|---|---|---|
+| 1 | The model layer cannot reach the database | `test_the_model_layer_cannot_reach_the_database` (AST scan of `app/llm` and `app/core/llm_tracing.py`) |
+| 2 | The SQL safety layer does not depend on LangChain or the model layer | `test_the_sql_safety_layer_does_not_depend_on_langchain_or_the_model_layer` |
+| 3 | Forbidden SQL never opens a database connection | `test_forbidden_sql_never_opens_a_database_connection` (9 statements, protocol stub and LangChain provider; `engine.connect` replaced by a guard that fails the test) |
+| 4 | A repaired statement is validated before it can run | `test_a_repaired_statement_is_validated_before_it_can_run`; security errors are never repaired |
+| 5 | The provider cannot change who the query runs as | `test_the_provider_cannot_change_who_the_query_runs_as`; live check: customer 7 sees 4 of 766 vehicles, customer 8 sees 11 |
+| 6 | A provider failure leaks no key, message or request | `test_a_provider_failure_does_not_leak_its_message_key_or_request_into_the_response_or_logs` (deliberately fake key) |
+| 7 | Production error responses do not echo SQL or driver messages | `test_production_error_responses_do_not_echo_the_sql_or_the_driver_message` |
+| 8 | Outside production only the generation failure carries a debug block | `test_outside_production_only_the_generation_failure_carries_a_debug_block` (known, documented behavior) |
+| 9 | Tracing cannot break a request and sends no prompts, SQL or secrets | `test_llm_tracing.py` (dead, slow and failing endpoint; leak-detection control) |
+| 10 | No automatic provider fallback | `test_an_unknown_provider_fails_validation_and_never_falls_back` in `test_llm_provider.py`; live: Ollama selected with nothing running gives 503 `LLM_PROVIDER_UNAVAILABLE` in 0.9 s and never switches |
+| 11 | Secrets are absent from Git, logs and images | Git history search for the earlier key (0 hits); only key-shaped string in the repository is the fake test value; backend log after about 40 mixed requests (62 lines) had no token, secret, question or SQL; frontend container environment and bundle clean |
+
+### 15.3 End-to-end walkthrough (Docker, project `copilot-verify`, isolated ports and volumes)
+
+- Mock provider with JWT authentication: stack healthy, readiness `ready`, walkthrough script 18/18, tenant and JWT script 19/19.
+- Provider failure: Ollama selected with nothing running returned 503 `LLM_PROVIDER_UNAVAILABLE`; readiness stayed `ready` because readiness does not call the provider.
+- Forbidden SQL: a stand-in Ollama server returned 10 hostile statements (DROP, DELETE, UPDATE, a PII column, `pg_shadow`, `public.customers`, multiple statements, `pg_sleep`, `current_setting`, an unknown table). All were rejected (`QUERY_SECURITY_ERROR` or `QUERY_GENERATION_FAILED`); the database was unchanged afterwards (16 tables; 1000, 100, 354 and 50000 rows in the checked tables) and a valid control question returned 200.
+- Gemini selected with no key: readiness `degraded: ["llm_provider"]` and requests fail with `LLM_CONFIGURATION_ERROR`.
+- `backend/scripts/llm_smoke.py`: passes for mock and for the stand-in Ollama with real PostgreSQL execution; exits 2 for Gemini without a key.
+- The temporary stack, volumes, stand-in servers and test secrets were removed. The owner's own PostgreSQL volume and containers were not touched.
+
+### 15.4 Documentation reconciliation
+
+Most of `progress.md` (the overview, architecture, feature, testing, roadmap and state sections) was rewritten to match the code; earlier sprint blocks that describe removed features are labelled historical. `README.md` gained the provider-switching snippet and corrected durability, limitation and out-of-scope text. `docs/deployment.md` dropped the removed `LLM_MODE` instructions. `docs/architecture.md` describes the single-instance state model. `docs/operations.md` has a model-provider operations section. `.env.example` explains the Compose defaults against running directly. `final_sprints.md` is marked completed. A final audit then brought `docs/production-security-review.md`, `docs/conversation-context.md`, `docs/security.md` (conversation expiry), `docs/runbooks/credential-rotation.md` (LangSmith key) and `frontend/README.md` (was the create-next-app boilerplate) in line with the code.
+
+### 15.5 Repository hygiene
+
+No secrets, machine paths or build artifacts are tracked. The README documents the Windows long-path requirement for installing the Gemini client library. Temporary files were kept in the session scratchpad, not in the repository.
+
+### Providers and evaluation: what was and was not run
+
+| Item | Status |
+|---|---|
+| Mock provider | Fully exercised (tests, Docker, evaluation subset: 9 of 76 cases; 5 of 5 scored cases correct, 0 of 4 adversarial cases leaked, 4 inconclusive) |
+| Ollama | Code path and failure handling verified against a **stand-in server** only; **no real model inference was run** |
+| Gemini | Verified in Sprint 13; in Sprint 15 only the no-key and configuration paths. **No live Gemini evaluation was run** |
+| LangSmith | Verified against local fake endpoints only; **no live check** |
+| k6 load test, Trivy scan | Not run |
+| First CI run on GitHub | Not run |
+
+### Remaining limitations
+
+- Gemini and Ollama evaluation baselines do not exist; the first live runs create them. Real-model results are not deterministic (Gemini 3 ignores `temperature`).
+- The backend has no lockfile; `pip-audit` covers the resolved set at the time it runs.
+- Tracing, when enabled, sends request ids and timings to a third party (documented in `docs/llm-providers.md`, `docs/security.md`, `docs/threat-model.md`).
+- Outside production the generation-failure response includes a `debug` block by design.
+- Out of scope: an identity provider, multi-replica scale-out, multi-region operation, embeddings, automatic provider fallback.
+
+### Commands
+
+```bash
+# Run locally with the stack (mock provider, no key)
+docker compose up --build -d
+docker compose --profile demo run --rm seed
+
+# Switch provider: set LLM_PROVIDER (mock | gemini | ollama) and LLM_MODEL in .env, then
+docker compose up -d --build
+python backend/scripts/llm_smoke.py
+
+# Verify
+cd backend && python -m ruff check . && python -m mypy && python -m pytest -m "not integration"
+cd frontend && npm run lint && npm test && npm run build
+```
+
+### Project-closure gate
+
+The exit conditions of `final_sprints.md` are met except for the checks that need resources not available here, listed above as not run. Those are verification steps for the owner (a real Ollama run on the Mac, a live Gemini evaluation if a key is supplied, and the first GitHub CI run), not further development. The project is closed.
