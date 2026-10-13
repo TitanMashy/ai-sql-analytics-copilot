@@ -179,27 +179,33 @@ jobs:
     env:
       POSTGRES_PASSWORD: ci-only-password
       ANALYTICS_DATABASE_PASSWORD: ci-only-readonly-password
+
     steps:
       - uses: actions/checkout@v4
+
       - name: Validate Compose files
         run: |
           docker compose config --quiet
           docker compose -f docker-compose.yml -f docker-compose.dev.yml config --quiet
           docker compose -f docker-compose.yml -f docker-compose.loadtest.yml config --quiet
           docker compose --profile demo --profile ops config --quiet
+
       - name: Build backend image
         run: docker build -t analytics-backend:ci backend
+
       - name: Build frontend image
         run: docker build -t analytics-frontend:ci --build-arg INTERNAL_API_URL=http://backend:8000 frontend
+
       - name: Scan backend image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@0.33.1
         with:
           image-ref: analytics-backend:ci
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
+
       - name: Scan frontend image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@0.33.1
         with:
           image-ref: analytics-frontend:ci
           severity: HIGH,CRITICAL
