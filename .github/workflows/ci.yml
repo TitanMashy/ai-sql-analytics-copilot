@@ -67,7 +67,7 @@ jobs:
         run: python -m pip_audit --skip-editable --progress-spinner off
       - name: Upload coverage report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: backend-coverage
           path: backend/coverage.json
@@ -139,7 +139,7 @@ jobs:
           if [ -f backend/eval-summary.md ]; then cat backend/eval-summary.md >> "$GITHUB_STEP_SUMMARY"; fi
       - name: Upload evaluation report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: evaluation-mock
           path: |
