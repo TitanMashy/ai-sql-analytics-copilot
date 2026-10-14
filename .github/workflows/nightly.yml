@@ -124,7 +124,7 @@ jobs:
           if [ -f backend/eval-summary.md ]; then cat backend/eval-summary.md >> "$GITHUB_STEP_SUMMARY"; fi
       - name: Upload report and trend
         if: always() && steps.key.outputs.available == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: evaluation-${{ env.PROVIDER }}
           path: |
